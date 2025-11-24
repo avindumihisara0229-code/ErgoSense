@@ -1,0 +1,59 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/avindumihisara0229-code/ErgoSense/blob/Avindu/Posture%20Detetction\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "!pip install mediapipe\n",
+        "!pip install mediapipe protobuf numpy\n",
+        "!pip install scikit-learn pandas opencv-python tqdm -q\n",
+        "!pip uninstall -y mediapipe protobuf numpy\n",
+        "\n",
+        "!pip install mediapipe protobuf numpy\n",
+        "!pip install scikit-learn pandas opencv-python tqdm -q\n",
+        "import os\n",
+        "import cv2\n",
+        "import mediapipe as mp\n",
+        "import numpy as np\n",
+        "import pandas as pd\n",
+        "from sklearn.model_selection import train_test_split\n",
+        "from sklearn.ensemble import RandomForestClassifier\n",
+        "from sklearn.metrics import accuracy_score, classification_report\n",
+        "import joblib\n",
+        "from google.colab import drive\n",
+        "from tqdm.notebook import tqdm\n",
+        "\n",
+        "drive.mount('/content/drive')\n",
+        "print(\"✅ Step 1: Setup complete. Libraries installed and Drive mounted.\")"
+      ],
+      "metadata": {
+        "id": "B311sE1Xzh71"
+      },
+      "execution_count": null,
+      "outputs": []
+    }
+  ],
+  "metadata": {
+    "colab": {
+      "name": "Welcome To Colab",
+      "toc_visible": true,
+      "provenance": [],
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "display_name": "Python 3",
+      "name": "python3"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 0
+}
