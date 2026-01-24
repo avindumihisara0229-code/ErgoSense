@@ -3,70 +3,107 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Posture AI</title>
+    <title>AI Health Monitor</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background-color: #212529; color: white; }
-        .container { max-width: 800px; margin-top: 30px; }
-        #videoElement { width: 100%; border-radius: 10px; border: 3px solid #444; }
-        #statusBox { 
-            font-size: 2rem; 
-            font-weight: bold; 
-            padding: 20px; 
-            margin-top: 20px; 
-            border-radius: 10px; 
-            background-color: #333;
-            text-align: center;
+        body { background-color: #1a1d20; color: white; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .container { max-width: 900px; margin-top: 30px; }
+        
+        #videoContainer { position: relative; width: 100%; max-width: 640px; margin: 0 auto; }
+        #videoElement { width: 100%; border-radius: 12px; border: 2px solid #3d4246; background-color: #000; }
+        
+        .display-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 25px;
         }
-        .correct { background-color: #198754 !important; color: white; } /* Green */
-        .incorrect { background-color: #dc3545 !important; color: white; } /* Red */
-        .neutral { background-color: #333; color: #aaa; }
+
+        .monitor-card {
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            transition: all 0.3s ease;
+            background-color: #2b3035;
+            border: 1px solid #3d4246;
+        }
+
+        .label-text { font-size: 0.9rem; text-transform: uppercase; color: #adb5bd; margin-bottom: 5px; }
+        .status-text { font-size: 1.5rem; font-weight: bold; }
+
+        /* Status Colors */
+        .status-green { background-color: #198754 !important; color: white; border-color: #146c43; }
+        .status-red { background-color: #dc3545 !important; color: white; border-color: #a71d2a; }
+        .status-gray { background-color: #343a40 !important; color: #6c757d; }
+        .status-orange { background-color: #fd7e14 !important; color: white; }
+
+        .header-section { margin-bottom: 30px; }
     </style>
 </head>
 <body>
 
-<div class="container text-center">
-    <h2>📡 Live Posture Tracker</h2>
-    <p class="text-muted">Ensure your full left side is visible.</p>
+<div class="container">
+    <div class="header-section text-center">
+        <h2>🧠 AI Posture & Stress Monitor</h2>
+        <p class="text-muted">Real-time analysis using MediaPipe & Machine Learning</p>
+    </div>
     
-    <video id="videoElement" autoplay playsinline></video>
+    <div id="videoContainer">
+        <video id="videoElement" autoplay playsinline></video>
+    </div>
     
     <canvas id="canvas" style="display:none;"></canvas>
 
-    <div id="statusBox" class="neutral">Waiting for camera...</div>
+    <div class="display-grid">
+        <div id="postureCard" class="monitor-card status-gray">
+            <div class="label-text">Posture Analysis</div>
+            <div id="postureStatus" class="status-text">Initializing...</div>
+            <small id="postureMode" class="text-light"></small>
+        </div>
+
+        <div id="stressCard" class="monitor-card status-gray">
+            <div class="label-text">Stress Level</div>
+            <div id="stressStatus" class="status-text">Initializing...</div>
+        </div>
+    </div>
 </div>
 
 <script>
     const video = document.getElementById('videoElement');
     const canvas = document.getElementById('canvas');
-    const statusBox = document.getElementById('statusBox');
     const context = canvas.getContext('2d');
+
+    // UI Elements
+    const postureCard = document.getElementById('postureCard');
+    const postureStatus = document.getElementById('postureStatus');
+    const postureMode = document.getElementById('postureMode');
+
+    const stressCard = document.getElementById('stressCard');
+    const stressStatus = document.getElementById('stressStatus');
 
     // 1. Access the Webcam
     if (navigator.mediaDevices.getUserMedia) {
         navigator.mediaDevices.getUserMedia({ video: true })
             .then(function (stream) {
                 video.srcObject = stream;
-                // Start the prediction loop once video is playing
-                setInterval(sendFrameToBackend, 500); // Run every 500ms (0.5 sec)
+                setInterval(sendFrameToBackend, 500); // 2 FPS to save CPU
             })
             .catch(function (error) {
-                console.log("Something went wrong with the camera!", error);
-                statusBox.innerText = "Camera Access Denied";
+                postureStatus.innerText = "Camera Error";
+                stressStatus.innerText = "Camera Error";
             });
     }
 
-    // 2. Function to capture frame and send to Flask
+    // 2. Process and Send Frames
     function sendFrameToBackend() {
-        // Draw current video frame to canvas
+        if (video.videoWidth === 0) return;
+
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        // Convert canvas image to Base64 string
-        const dataURL = canvas.toDataURL('image/jpeg');
+        const dataURL = canvas.toDataURL('image/jpeg', 0.7); // 0.7 quality for speed
 
-        // Send to Flask using Fetch API
         fetch('/predict_frame', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -75,19 +112,29 @@
         .then(response => response.json())
         .then(data => {
             if (data.status === 'success') {
-                statusBox.innerText = data.result;
-                // Update Color
-                if (data.color === 'green') {
-                    statusBox.className = 'correct';
-                } else {
-                    statusBox.className = 'incorrect';
-                }
-            } else if (data.status === 'no_pose') {
-                statusBox.innerText = "No person detected";
-                statusBox.className = 'neutral';
+                // --- Update Posture UI ---
+                postureStatus.innerText = data.posture.result;
+                postureMode.innerText = `Mode: ${data.posture.mode}`;
+                updateCardStyle(postureCard, data.posture.color);
+
+                // --- Update Stress UI ---
+                stressStatus.innerText = data.stress.result;
+                updateCardStyle(stressCard, data.stress.color);
+            } else {
+                postureStatus.innerText = "Error";
+                stressStatus.innerText = "Error";
             }
         })
         .catch(error => console.error('Error:', error));
+    }
+
+    // Helper to update CSS classes dynamically
+    function updateCardStyle(element, color) {
+        element.classList.remove('status-green', 'status-red', 'status-gray', 'status-orange');
+        if (color === 'green') element.classList.add('status-green');
+        else if (color === 'red') element.classList.add('status-red');
+        else if (color === 'orange') element.classList.add('status-orange');
+        else element.classList.add('status-gray');
     }
 </script>
 
