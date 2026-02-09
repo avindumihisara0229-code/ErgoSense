@@ -4,14 +4,21 @@ import joblib
 import numpy as np
 import mediapipe as mp
 import base64
+import time
+from datetime import datetime
 from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__)
 
 # --- CONFIGURATION ---
 MODEL_PATH = 'posture_model.joblib'
-SENSITIVITY_THRESHOLD = 0.3  # For Side View (ML)
-FRONT_SENSITIVITY = 0.15     # For Front View (Math) - Adjust if needed
+SENSITIVITY_THRESHOLD = 0.3  # Side View (ML)
+FRONT_SENSITIVITY = 0.15     # Front View (Math)
+
+# --- GLOBAL VARIABLES ---
+# We use a simple list to store history in memory.
+# In a real production app, you would use a database (SQL).
+posture_history = [] 
 
 # --- LOAD MODEL ---
 try:
@@ -25,9 +32,7 @@ mp_pose = mp.solutions.pose
 pose_estimator = mp_pose.Pose(static_image_mode=True, min_detection_confidence=0.5)
 
 # --- HELPER FUNCTIONS ---
-
 def calculate_angle(a, b, c):
-    """Calculates angle for Side View logic"""
     a, b, c = np.array(a), np.array(b), np.array(c)
     radians = np.arctan2(c[1]-b[1], c[0]-b[0]) - np.arctan2(a[1]-b[1], a[0]-b[0])
     angle = np.abs(radians * 180.0 / np.pi)
@@ -46,53 +51,34 @@ def analyze_posture(image):
 
     landmarks = results.pose_landmarks.landmark
 
-    # --- 1. DETECT ORIENTATION (FRONT vs SIDE) ---
-    # We check the horizontal distance between shoulders.
-    # If shoulders are far apart (wide), it's FRONT view.
-    # If shoulders are close together (overlapping), it's SIDE view.
-    
+    # 1. Orientation Check
     left_shoulder_x = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x
     right_shoulder_x = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].x
-    
     shoulder_width = abs(left_shoulder_x - right_shoulder_x)
-    
-    # Threshold: If shoulder width is > 0.15 (normalized coords), likely facing front
     is_front_facing = shoulder_width > 0.15
 
-    # --- 2. BRANCH LOGIC ---
-    
+    status_result = ""
+    posture_mode = ""
+
+    # 2. Logic Branch
     if is_front_facing:
-        # === FRONT VIEW LOGIC (GEOMETRIC) ===
-        # We can't use the ML model here. We use math rules.
-        
-        # Rule 1: Shoulder Alignment (Are you leaning?)
+        # Front Logic
         left_shoulder_y = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y
         right_shoulder_y = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].y
         shoulder_tilt = abs(left_shoulder_y - right_shoulder_y)
 
-        # Rule 2: Vertical Head Position (Are you slouching down?)
-        # Compare Nose Y to average Shoulder Y
         nose_y = landmarks[mp_pose.PoseLandmark.NOSE.value].y
         avg_shoulder_y = (left_shoulder_y + right_shoulder_y) / 2
-        
-        # Calculate vertical distance (Head to Shoulders)
-        # Normal upright posture has a larger gap. Slouching makes this gap smaller.
         head_neck_dist = avg_shoulder_y - nose_y
 
-        print(f"FRONT MODE | Tilt: {shoulder_tilt:.3f} | Neck Dist: {head_neck_dist:.3f}")
-
-        # LOGIC: 
-        # - If tilt > 0.04: Leaning too much
-        # - If head_neck_dist < 0.15: Head is too close to shoulders (Slumping)
-        # (Note: These thresholds might need tuning based on your webcam distance)
-        
+        posture_mode = "Front"
         if shoulder_tilt > 0.05 or head_neck_dist < FRONT_SENSITIVITY:
-            return {'status': 'success', 'result': 'Incorrect Posture (Front)', 'color': 'red', 'mode': 'Front'}
+            status_result = "Incorrect"
         else:
-            return {'status': 'success', 'result': 'Correct Posture (Front)', 'color': 'green', 'mode': 'Front'}
+            status_result = "Correct"
 
     else:
-        # === SIDE VIEW LOGIC (ML MODEL) ===
+        # Side Logic
         try:
             left_shoulder = [landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x, 
                              landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y]
@@ -106,22 +92,35 @@ def analyze_posture(image):
             neck_angle = calculate_angle(left_ear, left_shoulder, left_hip)
             back_angle = calculate_angle(left_shoulder, left_hip, left_knee)
             
-            features = [neck_angle, back_angle]
-            
-            # Predict
-            probabilities = model.predict_proba([features])[0]
+            probabilities = model.predict_proba([[neck_angle, back_angle]])[0]
             prob_incorrect = probabilities[1]
             
-            print(f"SIDE MODE | Bad Prob: {prob_incorrect:.2f}")
-
+            posture_mode = "Side"
             if prob_incorrect > SENSITIVITY_THRESHOLD:
-                return {'status': 'success', 'result': 'Incorrect Posture (Side)', 'color': 'red', 'mode': 'Side'}
+                status_result = "Incorrect"
             else:
-                return {'status': 'success', 'result': 'Correct Posture (Side)', 'color': 'green', 'mode': 'Side'}
+                status_result = "Correct"
+        except:
+             return {'status': 'error', 'message': "Full body not visible"}
 
-        except Exception as e:
-            # Fallback if landmarks are missing (e.g. knees hidden)
-            return {'status': 'error', 'message': "Please show full body (Side view)"}
+    # 3. Log History
+    # We only log if it's 'Incorrect' to save space, or you can log everything.
+    # Let's log every 10th frame or just return the status to JS to handle logging.
+    # Here we will just return the result and let the frontend decide when to alert.
+    
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    
+    # Store in global list (Limit to last 50 entries to prevent memory overflow)
+    posture_history.insert(0, {'time': timestamp, 'status': status_result, 'mode': posture_mode})
+    if len(posture_history) > 50:
+        posture_history.pop()
+
+    return {
+        'status': 'success', 
+        'result': f"{status_result} Posture ({posture_mode})", 
+        'is_bad': status_result == "Incorrect",
+        'color': 'red' if status_result == "Incorrect" else 'green'
+    }
 
 
 # --- ROUTES ---
@@ -136,21 +135,18 @@ def predict_frame():
         data = request.json['image']
         header, encoded = data.split(",", 1)
         binary_data = base64.b64decode(encoded)
-        
         image_arr = np.frombuffer(binary_data, dtype=np.uint8)
         img = cv2.imdecode(image_arr, cv2.IMREAD_COLOR)
 
         result = analyze_posture(img)
-        
-        if result['status'] == 'no_pose':
-             return jsonify({'status': 'no_pose', 'message': 'No person detected'})
-        elif result['status'] == 'error':
-             return jsonify({'status': 'error', 'message': result['message']})
-        
         return jsonify(result)
-
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
+
+@app.route('/get_history')
+def get_history():
+    """Returns the latest history log to the webpage"""
+    return jsonify(posture_history)
 
 if __name__ == '__main__':
     app.run(debug=True)
