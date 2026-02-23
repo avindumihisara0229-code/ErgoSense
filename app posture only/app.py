@@ -4,7 +4,7 @@ import joblib
 import numpy as np
 import mediapipe as mp
 import base64
-import time
+import sqlite3
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
 
@@ -12,18 +12,35 @@ app = Flask(__name__)
 
 # --- CONFIGURATION ---
 MODEL_PATH = 'posture_model.joblib'
-SENSITIVITY_THRESHOLD = 0.3  # Side View (ML)
-FRONT_SENSITIVITY = 0.15     # Front View (Math)
+SENSITIVITY_THRESHOLD = 0.3  
+FRONT_SENSITIVITY = 0.15     
 
-# --- GLOBAL VARIABLES ---
-# We use a simple list to store history in memory.
-# In a real production app, you would use a database (SQL).
-posture_history = [] 
+# --- DATABASE SETUP ---
+# Connect to SQLite (Creates ergosense.db file automatically)
+conn = sqlite3.connect('ergosense.db', check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS posture_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT,
+        status TEXT,
+        mode TEXT
+    )
+''')
+conn.commit()
 
-# --- LOAD MODEL ---
+# --- CALIBRATION DATA ---
+# Stores the user's perfect baseline posture
+user_baseline = {
+    'front_neck_dist': None,
+    'side_neck_angle': None,
+    'side_back_angle': None,
+    'is_calibrated': False
+}
+
 try:
     model = joblib.load(MODEL_PATH)
-    print("✅ Model loaded successfully!")
+    print("✅ ERGOSENSE Model loaded successfully!")
 except FileNotFoundError:
     print(f"❌ Error: '{MODEL_PATH}' not found.")
     model = None
@@ -31,97 +48,78 @@ except FileNotFoundError:
 mp_pose = mp.solutions.pose
 pose_estimator = mp_pose.Pose(static_image_mode=True, min_detection_confidence=0.5)
 
-# --- HELPER FUNCTIONS ---
 def calculate_angle(a, b, c):
     a, b, c = np.array(a), np.array(b), np.array(c)
     radians = np.arctan2(c[1]-b[1], c[0]-b[0]) - np.arctan2(a[1]-b[1], a[0]-b[0])
     angle = np.abs(radians * 180.0 / np.pi)
-    if angle > 180.0:
-        angle = 360 - angle
-    return angle
+    return 360 - angle if angle > 180.0 else angle
 
-def analyze_posture(image):
-    if image is None: return {'status': 'no_pose'}
-
+def extract_features(image):
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     results = pose_estimator.process(image_rgb)
+    if not results.pose_landmarks: return None
+    return results.pose_landmarks.landmark
 
-    if not results.pose_landmarks:
-        return {'status': 'no_pose'}
+def analyze_posture(image):
+    landmarks = extract_features(image)
+    if not landmarks: return {'status': 'no_pose'}
 
-    landmarks = results.pose_landmarks.landmark
-
-    # 1. Orientation Check
+    # Determine orientation
     left_shoulder_x = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x
     right_shoulder_x = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].x
-    shoulder_width = abs(left_shoulder_x - right_shoulder_x)
-    is_front_facing = shoulder_width > 0.15
+    is_front_facing = abs(left_shoulder_x - right_shoulder_x) > 0.15
 
-    status_result = ""
-    posture_mode = ""
+    status_result = "Correct"
+    posture_mode = "Front" if is_front_facing else "Side"
 
-    # 2. Logic Branch
     if is_front_facing:
-        # Front Logic
+        # FRONT VIEW LOGIC
         left_shoulder_y = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y
         right_shoulder_y = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].y
-        shoulder_tilt = abs(left_shoulder_y - right_shoulder_y)
-
         nose_y = landmarks[mp_pose.PoseLandmark.NOSE.value].y
         avg_shoulder_y = (left_shoulder_y + right_shoulder_y) / 2
         head_neck_dist = avg_shoulder_y - nose_y
 
-        posture_mode = "Front"
-        if shoulder_tilt > 0.05 or head_neck_dist < FRONT_SENSITIVITY:
-            status_result = "Incorrect"
+        if user_baseline['is_calibrated'] and user_baseline['front_neck_dist']:
+            # Use personalized calibration (If head drops 20% below baseline = bad)
+            if head_neck_dist < (user_baseline['front_neck_dist'] * 0.8):
+                status_result = "Incorrect"
         else:
-            status_result = "Correct"
+            # Use default math
+            if head_neck_dist < FRONT_SENSITIVITY: status_result = "Incorrect"
 
     else:
-        # Side Logic
+        # SIDE VIEW LOGIC
         try:
-            left_shoulder = [landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x, 
-                             landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y]
-            left_ear      = [landmarks[mp_pose.PoseLandmark.LEFT_EAR.value].x, 
-                             landmarks[mp_pose.PoseLandmark.LEFT_EAR.value].y]
-            left_hip      = [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x, 
-                             landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y]
-            left_knee     = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x, 
-                             landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
+            ls = [landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x, landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y]
+            le = [landmarks[mp_pose.PoseLandmark.LEFT_EAR.value].x, landmarks[mp_pose.PoseLandmark.LEFT_EAR.value].y]
+            lh = [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x, landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y]
+            lk = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x, landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
+            neck_angle = calculate_angle(le, ls, lh)
+            back_angle = calculate_angle(ls, lh, lk)
 
-            neck_angle = calculate_angle(left_ear, left_shoulder, left_hip)
-            back_angle = calculate_angle(left_shoulder, left_hip, left_knee)
-            
-            probabilities = model.predict_proba([[neck_angle, back_angle]])[0]
-            prob_incorrect = probabilities[1]
-            
-            posture_mode = "Side"
-            if prob_incorrect > SENSITIVITY_THRESHOLD:
-                status_result = "Incorrect"
+            if user_baseline['is_calibrated'] and user_baseline['side_neck_angle']:
+                # Use personalized calibration (Deviation > 15 degrees = bad)
+                if abs(neck_angle - user_baseline['side_neck_angle']) > 15 or abs(back_angle - user_baseline['side_back_angle']) > 15:
+                    status_result = "Incorrect"
             else:
-                status_result = "Correct"
+                # Use ML Model
+                prob_incorrect = model.predict_proba([[neck_angle, back_angle]])[0][1]
+                if prob_incorrect > SENSITIVITY_THRESHOLD: status_result = "Incorrect"
         except:
              return {'status': 'error', 'message': "Full body not visible"}
 
-    # 3. Log History
-    # We only log if it's 'Incorrect' to save space, or you can log everything.
-    # Let's log every 10th frame or just return the status to JS to handle logging.
-    # Here we will just return the result and let the frontend decide when to alert.
-    
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    
-    # Store in global list (Limit to last 50 entries to prevent memory overflow)
-    posture_history.insert(0, {'time': timestamp, 'status': status_result, 'mode': posture_mode})
-    if len(posture_history) > 50:
-        posture_history.pop()
+    # Save to SQLite Database
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("INSERT INTO posture_logs (timestamp, status, mode) VALUES (?, ?, ?)", (timestamp, status_result, posture_mode))
+    conn.commit()
 
     return {
         'status': 'success', 
         'result': f"{status_result} Posture ({posture_mode})", 
         'is_bad': status_result == "Incorrect",
-        'color': 'red' if status_result == "Incorrect" else 'green'
+        'calibrated': user_baseline['is_calibrated']
     }
-
 
 # --- ROUTES ---
 
@@ -129,24 +127,60 @@ def analyze_posture(image):
 def index():
     return render_template('index.html')
 
+@app.route('/analytics')
+def analytics_page():
+    return render_template('analytics.html')
+
+@app.route('/help')
+def help_page():
+    return render_template('help.html')
+
+@app.route('/calibrate', methods=['POST'])
+def calibrate():
+    try:
+        data = request.json['image']
+        header, encoded = data.split(",", 1)
+        binary_data = base64.b64decode(encoded)
+        img = cv2.imdecode(np.frombuffer(binary_data, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+        landmarks = extract_features(img)
+        if not landmarks: return jsonify({'status': 'error', 'message': 'No person detected for calibration'})
+
+        # Calculate Front & Side metrics and save them
+        ls_y = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y
+        rs_y = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].y
+        nose_y = landmarks[mp_pose.PoseLandmark.NOSE.value].y
+        user_baseline['front_neck_dist'] = ((ls_y + rs_y) / 2) - nose_y
+
+        ls = [landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x, ls_y]
+        le = [landmarks[mp_pose.PoseLandmark.LEFT_EAR.value].x, landmarks[mp_pose.PoseLandmark.LEFT_EAR.value].y]
+        lh = [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x, landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y]
+        lk = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x, landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
+        user_baseline['side_neck_angle'] = calculate_angle(le, ls, lh)
+        user_baseline['side_back_angle'] = calculate_angle(ls, lh, lk)
+
+        user_baseline['is_calibrated'] = True
+        return jsonify({'status': 'success', 'message': 'Baseline Calibrated Successfully!'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
 @app.route('/predict_frame', methods=['POST'])
 def predict_frame():
     try:
         data = request.json['image']
         header, encoded = data.split(",", 1)
-        binary_data = base64.b64decode(encoded)
-        image_arr = np.frombuffer(binary_data, dtype=np.uint8)
-        img = cv2.imdecode(image_arr, cv2.IMREAD_COLOR)
-
-        result = analyze_posture(img)
-        return jsonify(result)
+        img = cv2.imdecode(np.frombuffer(base64.b64decode(encoded), dtype=np.uint8), cv2.IMREAD_COLOR)
+        return jsonify(analyze_posture(img))
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
 @app.route('/get_history')
 def get_history():
-    """Returns the latest history log to the webpage"""
-    return jsonify(posture_history)
+    # Fetch the last 100 entries from the database
+    cursor.execute("SELECT timestamp, status, mode FROM posture_logs ORDER BY id DESC LIMIT 100")
+    rows = cursor.fetchall()
+    history = [{'time': r[0], 'status': r[1], 'mode': r[2]} for r in rows]
+    return jsonify(history)
 
 if __name__ == '__main__':
     app.run(debug=True)
