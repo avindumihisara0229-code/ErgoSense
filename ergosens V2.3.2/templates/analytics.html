@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ERGOSENSE | Analytics Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { background: #020617; color: #e2e8f0; font-family: 'Segoe UI', Tahoma, sans-serif; min-height: 100vh; }
+        .navbar { background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(15px); border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .navbar-brand { font-weight: 800; letter-spacing: 2px; color: #c7d2fe !important; }
+        .nav-link { color: #94a3b8 !important; transition: 0.3s; }
+        .nav-link:hover, .nav-link.active { color: #818cf8 !important; }
+        
+        .glass-panel { 
+            background: rgba(10, 15, 30, 0.6); 
+            backdrop-filter: blur(20px); 
+            border: 1px solid rgba(255, 255, 255, 0.03); 
+            border-radius: 20px; 
+            padding: 25px; 
+            height: 100%; 
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3); 
+            transition: transform 0.3s ease, border 0.3s ease;
+        }
+        
+        .glass-panel:hover {
+            transform: translateY(-5px);
+            border: 1px solid rgba(129, 140, 248, 0.3);
+        }
+        
+        .table-dark { background-color: transparent; font-size: 0.85rem;}
+        .table-dark td, .table-dark th { background: transparent; border-bottom: 1px solid rgba(255,255,255,0.05); color: #cbd5e1; padding: 8px 5px;}
+        
+        /* Custom Scrollbar for the log tables */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+        .chart-wrapper { position: relative; height: 200px; width: 100%; }
+        .table-wrapper { max-height: 200px; overflow-y: auto; overflow-x: hidden; padding-right: 5px; }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg mb-4">
+    <div class="container-fluid px-4">
+        <a class="navbar-brand" href="/">ERGOSENSE</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon" style="filter: invert(1);"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav ms-auto">
+                <li class="nav-item"><a class="nav-link" href="/">Scanner</a></li>
+                <li class="nav-item"><a class="nav-link active" href="/analytics">Analytics</a></li>
+                <li class="nav-item"><a class="nav-link" href="/help">Help</a></li>
+            </ul>
+        </div>
+    </div>
+</nav>
+
+<div class="container mb-5">
+    
+    <div class="row g-4 mb-5">
+        <div class="col-md-9">
+            <div class="glass-panel">
+                <h5 style="color: #818cf8; margin-bottom: 15px;">24-Hour Holistic Fatigue Forecast</h5>
+                <div style="height: 280px; width: 100%;">
+                    <canvas id="stressTrendChart"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="glass-panel text-center d-flex flex-column justify-content-center">
+                <h6 style="color: #94a3b8; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px;">Optimal Work Window</h6>
+                <h2 id="bestTimeDisplay" style="color: #10b981; font-weight: 800; font-size: 3.5rem; margin: 20px 0;">--:--</h2>
+                <span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.4); padding: 8px;">Lowest Fatigue Score</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-end mb-3">
+        <h4 class="m-0" style="color: #94a3b8;">Live Component Tracking</h4>
+        <span class="badge" style="background: rgba(99,102,241,0.2); color: #818cf8; border: 1px solid rgba(99,102,241,0.4);">4x Sensors Active</span>
+    </div>
+
+    <div class="row g-4">
+        
+        <div class="col-md-6">
+            <div class="glass-panel">
+                <h6 style="color: #10b981; margin-bottom: 15px; text-transform: uppercase;">1. Posture Framework (Live DB)</h6>
+                <div class="row">
+                    <div class="col-5 chart-wrapper"><canvas id="postureChart"></canvas></div>
+                    <div class="col-7 table-wrapper">
+                        <table class="table table-dark">
+                            <thead><tr><th>Time</th><th>Status</th><th>Mode</th></tr></thead>
+                            <tbody id="historyTableBody"><tr><td colspan="3" class="text-center">Loading...</td></tr></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="glass-panel">
+                <h6 style="color: #38bdf8; margin-bottom: 15px; text-transform: uppercase;">2. Visual Stress Tracking</h6>
+                <div class="row">
+                    <div class="col-5 chart-wrapper"><canvas id="visualChart"></canvas></div>
+                    <div class="col-7 table-wrapper">
+                        <table class="table table-dark">
+                            <thead><tr><th>Time</th><th>Status</th><th>Source</th></tr></thead>
+                            <tbody id="visualTableBody"><tr><td colspan="3" class="text-center">Initializing...</td></tr></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="glass-panel">
+                <h6 style="color: #fbbf24; margin-bottom: 15px; text-transform: uppercase;">3. Vocal Stress Detection</h6>
+                <div class="row">
+                    <div class="col-5 chart-wrapper"><canvas id="vocalChart"></canvas></div>
+                    <div class="col-7 table-wrapper">
+                        <table class="table table-dark">
+                            <thead><tr><th>Time</th><th>Status</th><th>Source</th></tr></thead>
+                            <tbody id="vocalTableBody"><tr><td colspan="3" class="text-center">Initializing...</td></tr></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="glass-panel">
+                <h6 style="color: #a78bfa; margin-bottom: 15px; text-transform: uppercase;">4. Drowsiness Monitoring</h6>
+                <div class="row">
+                    <div class="col-5 chart-wrapper"><canvas id="drowsChart"></canvas></div>
+                    <div class="col-7 table-wrapper">
+                        <table class="table table-dark">
+                            <thead><tr><th>Time</th><th>Status</th><th>Source</th></tr></thead>
+                            <tbody id="drowsTableBody"><tr><td colspan="3" class="text-center">Initializing...</td></tr></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // --- 1. CHART HELPERS ---
+    Chart.defaults.color = '#cbd5e1';
+    
+    function createDoughnutChart(ctxId, colorGood, colorBad) {
+        return new Chart(document.getElementById(ctxId).getContext('2d'), {
+            type: 'doughnut',
+            data: {
+                labels: ['Optimal', 'Stressed'],
+                datasets: [{
+                    data: [50, 50],
+                    backgroundColor: [colorGood, colorBad],
+                    borderColor: '#020617',
+                    borderWidth: 2, hoverOffset: 4
+                }]
+            },
+            options: { 
+                cutout: '70%', 
+                plugins: { legend: { position: 'bottom', labels: { padding: 10, boxWidth: 10, font: {size: 10} } } },
+                layout: { padding: 0 }, responsive: true, maintainAspectRatio: false
+            }
+        });
+    }
+
+    // Initialize all Doughnut Charts with custom colors
+    const postureChart = createDoughnutChart('postureChart', 'rgba(16, 185, 129, 0.8)', 'rgba(239, 68, 68, 0.8)'); // Green/Red
+    const visualChart = createDoughnutChart('visualChart', 'rgba(56, 189, 248, 0.8)', 'rgba(239, 68, 68, 0.8)'); // Blue/Red
+    const vocalChart = createDoughnutChart('vocalChart', 'rgba(251, 191, 36, 0.8)', 'rgba(239, 68, 68, 0.8)'); // Yellow/Red
+    const drowsChart = createDoughnutChart('drowsChart', 'rgba(167, 139, 250, 0.8)', 'rgba(239, 68, 68, 0.8)'); // Purple/Red
+
+    // Initialize Top Trend Chart
+    const ctxTrend = document.getElementById('stressTrendChart').getContext('2d');
+    let trendChart = new Chart(ctxTrend, {
+        type: 'line',
+        data: { labels: [], datasets: [] },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            animation: { duration: 0 },
+            scales: {
+                y: { max: 100, min: 0, grid: { color: 'rgba(255,255,255,0.05)' } },
+                x: { grid: { display: false } }
+            },
+            plugins: { legend: { usePointStyle: true, boxWidth: 8 } }
+        }
+    });
+
+    // --- 2. DATA MANAGEMENT ---
+    
+    // Hold state for the hardcoded/simulated logs
+    const mockState = {
+        visual: { logs: [], stressPercent: 0, chart: visualChart, tbodyId: 'visualTableBody', color: '#38bdf8' },
+        vocal: { logs: [], stressPercent: 0, chart: vocalChart, tbodyId: 'vocalTableBody', color: '#fbbf24' },
+        drowsiness: { logs: [], stressPercent: 0, chart: drowsChart, tbodyId: 'drowsTableBody', color: '#a78bfa' }
+    };
+
+    let isMockInitialized = false;
+
+    // A. Fetch Real Posture Data
+    function updatePostureLogs() {
+        fetch('/get_history').then(res => res.json()).then(data => {
+            const tbody = document.getElementById('historyTableBody');
+            tbody.innerHTML = ""; 
+            if (data.length === 0) return;
+            
+            let goodCount = 0; let badCount = 0;
+            data.forEach(row => {
+                if(row.status === "Correct") goodCount++; else badCount++;
+                let color = row.status === "Incorrect" ? "#ef4444" : "#10b981";
+                
+                // Truncate time to just HH:MM:SS for the compact table
+                let timeOnly = row.time.split(" ")[1]; 
+
+                tbody.innerHTML += `<tr>
+                    <td style="color:#64748b;">${timeOnly}</td>
+                    <td style="color:${color}; font-weight:bold;">${row.status}</td>
+                    <td style="color:#cbd5e1;">${row.mode}</td>
+                </tr>`;
+            });
+
+            if(goodCount > 0 || badCount > 0) {
+                postureChart.data.datasets[0].data = [goodCount, badCount];
+                postureChart.update();
+            }
+        });
+    }
+
+    // B. Generate & Render Fake Logs for the other 3
+    function pushMockLogTick() {
+        const timeStr = new Date().toLocaleTimeString('en-GB'); // 24hr format
+        
+        ['visual', 'vocal', 'drowsiness'].forEach(type => {
+            const state = mockState[type];
+            // Determine status based on current API stress probability
+            const isStressed = (Math.random() * 100) < state.stressPercent;
+            
+            state.logs.unshift({
+                time: timeStr,
+                status: isStressed ? 'Stressed' : 'Optimal',
+                mode: 'Hardcoded'
+            });
+
+            if(state.logs.length > 20) state.logs.pop(); // Keep max 20 rows
+
+            // Render Table
+            const tbody = document.getElementById(state.tbodyId);
+            tbody.innerHTML = "";
+            let goodCount = 0; let badCount = 0;
+
+            state.logs.forEach(row => {
+                if(row.status === 'Optimal') goodCount++; else badCount++;
+                let colorCode = row.status === 'Stressed' ? '#ef4444' : state.color;
+
+                tbody.innerHTML += `<tr>
+                    <td style="color:#64748b;">${row.time}</td>
+                    <td style="color:${colorCode}; font-weight:bold;">${row.status}</td>
+                    <td style="color:#cbd5e1;">${row.mode}</td>
+                </tr>`;
+            });
+
+            // Update Doughnut
+            state.chart.data.datasets[0].data = [goodCount, badCount];
+            state.chart.update();
+        });
+    }
+
+    // C. Fetch 24-Hour Analytics & Update Mock Probabilities
+    function updateMultiModalAPI() {
+        fetch('/api/stress_data')
+            .then(res => res.json())
+            .then(data => {
+                // 1. Update Top Chart
+                trendChart.data = {
+                    labels: data.labels,
+                    datasets: [
+                        { label: 'Visual', data: data.visual, borderColor: '#38bdf8', borderDash: [5,5], borderWidth: 2, tension: 0.4 },
+                        { label: 'Vocal', data: data.vocal, borderColor: '#fbbf24', borderDash: [5,5], borderWidth: 2, tension: 0.4 },
+                        { label: 'Drowsiness', data: data.drowsiness, borderColor: '#a78bfa', borderDash: [5,5], borderWidth: 2, tension: 0.4 },
+                        { label: 'Live Posture Penalty', data: data.posture, borderColor: '#ef4444', borderWidth: 3, tension: 0.4 },
+                        { label: 'Overall Fatigue', data: data.overall, borderColor: '#818cf8', backgroundColor: 'rgba(129, 140, 248, 0.1)', borderWidth: 4, tension: 0.4, fill: true }
+                    ]
+                };
+                trendChart.update();
+
+                // 2. Update Golden Hour
+                document.getElementById('bestTimeDisplay').innerText = data.best_hour;
+
+                // 3. Update the stress probability for the fake logs based on the current hour
+                const currentHour = new Date().getHours();
+                mockState.visual.stressPercent = data.visual[currentHour];
+                mockState.vocal.stressPercent = data.vocal[currentHour];
+                mockState.drowsiness.stressPercent = data.drowsiness[currentHour];
+
+                // Pre-fill fake logs on first load so it doesn't look empty
+                if(!isMockInitialized) {
+                    for(let i=0; i<10; i++) pushMockLogTick();
+                    isMockInitialized = true;
+                }
+            });
+    }
+
+    // --- 3. RUNTIME ---
+    updateMultiModalAPI(); // Fetch main API
+    updatePostureLogs();   // Fetch real DB
+
+    // Poll live DB and inject simulated ticks every 3 seconds
+    setInterval(() => {
+        updatePostureLogs();
+        pushMockLogTick();
+    }, 3000);
+    
+    // Refresh the 24-hour API data every 60 seconds
+    setInterval(updateMultiModalAPI, 60000);
+
+</script>
+</body>
+</html>
