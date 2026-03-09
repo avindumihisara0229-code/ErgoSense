@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ERGOSENSE | Live Scanner</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #020617; color: #e2e8f0; font-family: 'Segoe UI', Tahoma, sans-serif; min-height: 100vh; }
+        .navbar { background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(15px); border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .navbar-brand { font-weight: 800; letter-spacing: 2px; color: #c7d2fe !important; }
+        .nav-link { color: #94a3b8 !important; transition: 0.3s; }
+        .nav-link:hover, .nav-link.active { color: #818cf8 !important; }
+        
+        .glass-panel { 
+            background: rgba(10, 15, 30, 0.6); 
+            backdrop-filter: blur(20px); 
+            border: 1px solid rgba(255, 255, 255, 0.03); 
+            border-radius: 15px; 
+            padding: 20px; 
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); 
+        }
+
+        /* Video Container - Made Smaller and Wider (16:9) */
+        .video-container {
+            position: relative;
+            width: 100%;
+            border-radius: 12px;
+            overflow: hidden;
+            background: #000;
+            border: 2px solid rgba(255,255,255,0.05);
+            aspect-ratio: 16/9; 
+            max-height: 380px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-top: 15px;
+        }
+
+        #videoElement {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror */
+        }
+
+        /* Overlays - Scaled Down Icons */
+        #cameraOffOverlay, #privacyOverlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+        
+        #cameraOffOverlay { background: rgba(2, 6, 23, 0.95); }
+        #privacyOverlay { background: rgba(15, 23, 42, 0.98); display: none; z-index: 5; }
+        
+        .overlay-icon { font-size: 2.5rem; margin-bottom: 5px; }
+        .overlay-title { font-size: 1.25rem; font-weight: bold; margin-bottom: 2px; }
+        .overlay-text { font-size: 0.85rem; color: #64748b; }
+
+        /* Switches & Buttons - Compacted */
+        .form-check-input:checked { background-color: #10b981; border-color: #10b981; }
+        .form-switch .form-check-input { width: 2.5em; height: 1.2em; margin-right: 8px; cursor: pointer; }
+        .form-check-label { font-size: 1rem; cursor: pointer; padding-top: 1px; }
+        .switch-hint { font-size: 0.75rem; color: #64748b; margin-left: 45px; margin-top: -3px; }
+
+        .btn-calibrate {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            border: none; color: white; padding: 8px 15px;
+            border-radius: 8px; font-weight: bold; width: 100%;
+            transition: transform 0.2s; font-size: 0.95rem;
+        }
+        .btn-calibrate:hover:not(:disabled) { transform: translateY(-2px); color: white; opacity: 0.9; }
+        .btn-calibrate:disabled { background: #475569; color: #94a3b8; transform: none; cursor: not-allowed; }
+
+        /* Status Boxes - Made Compact */
+        .status-box {
+            padding: 15px; border-radius: 12px;
+            text-align: center; margin-bottom: 12px;
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.05);
+            transition: all 0.3s ease;
+        }
+        .status-box h6 { font-weight: 800; letter-spacing: 1px; font-size: 0.85rem; margin-bottom: 8px; }
+        
+        .status-value { font-size: 1.25rem; font-weight: bold; padding: 8px; border-radius: 8px; }
+        
+        .val-wait { background: rgba(148, 163, 184, 0.1); color: #94a3b8; }
+        .val-good { background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }
+        .val-bad { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }
+        
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg mb-3">
+    <div class="container-fluid px-4">
+        <a class="navbar-brand" href="/">ERGOSENSE</a>
+        <div class="collapse navbar-collapse">
+            <ul class="navbar-nav ms-auto">
+                <li class="nav-item"><a class="nav-link active" href="/">Scanner</a></li>
+                <li class="nav-item"><a class="nav-link" href="/analytics">Analytics</a></li>
+                <li class="nav-item"><a class="nav-link" href="/help">Help</a></li>
+            </ul>
+        </div>
+    </div>
+</nav>
+
+<div class="container-fluid px-lg-5 mb-4">
+    <div class="row g-4">
+        
+        <div class="col-lg-7">
+            <div class="glass-panel h-100">
+                
+                <div class="row align-items-center">
+                    <div class="col-md-7">
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="masterPowerToggle">
+                            <label class="form-check-label fw-bold text-white" for="masterPowerToggle">Master Power</label>
+                            <div class="switch-hint">Enable hardware and AI tracking</div>
+                        </div>
+                        
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="privacyToggle" checked disabled>
+                            <label class="form-check-label fw-bold" style="color: #cbd5e1;" for="privacyToggle">Privacy Mode (Hide Feed)</label>
+                            <div class="switch-hint">Feed remains hidden while analyzing</div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-5 mt-3 mt-md-0">
+                        <button id="calibrateBtn" class="btn btn-calibrate" disabled>
+                            🎯 Calibrate Baseline
+                        </button>
+                    </div>
+                </div>
+
+                <div class="video-container">
+                    <video id="videoElement" autoplay playsinline></video>
+                    
+                    <div id="cameraOffOverlay">
+                        <span class="overlay-icon">📷❌</span>
+                        <div class="overlay-title" style="color: #94a3b8;">System Offline</div>
+                        <div class="overlay-text">Flick Master Power to begin.</div>
+                    </div>
+
+                    <div id="privacyOverlay">
+                        <span class="overlay-icon">🛡️</span>
+                        <div class="overlay-title" style="color: #10b981;">Privacy Mode Active</div>
+                        <div class="overlay-text">Camera feed hidden. AI analysis running.</div>
+                    </div>
+                </div>
+                <canvas id="canvasElement" style="display:none;"></canvas>
+            </div>
+        </div>
+
+        <div class="col-lg-5">
+            <div class="glass-panel h-100 d-flex flex-column justify-content-between">
+                
+                <div class="status-box" style="border-left: 4px solid #10b981;">
+                    <h6 style="color: #10b981;">1. POSTURE FRAMEWORK</h6>
+                    <div id="postureStatus" class="status-value val-wait">System Paused</div>
+                    <div id="calText" style="font-size: 0.75rem; color: #64748b; margin-top: 5px;">Waiting for camera...</div>
+                </div>
+
+                <div class="status-box" style="border-left: 4px solid #38bdf8;">
+                    <h6 style="color: #38bdf8;">2. VISUAL STRESS SENSOR</h6>
+                    <div id="visualStatus" class="status-value val-wait">--</div>
+                </div>
+
+                <div class="status-box" style="border-left: 4px solid #fbbf24;">
+                    <h6 style="color: #fbbf24;">3. VOCAL STRESS SENSOR</h6>
+                    <div id="vocalStatus" class="status-value val-wait">--</div>
+                </div>
+
+                <div class="status-box" style="border-left: 4px solid #a78bfa; margin-bottom: 0;">
+                    <h6 style="color: #a78bfa;">4. DROWSINESS MONITOR</h6>
+                    <div id="drowsStatus" class="status-value val-wait">--</div>
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    const video = document.getElementById('videoElement');
+    const canvas = document.getElementById('canvasElement');
+    const ctx = canvas.getContext('2d');
+    
+    // UI Elements
+    const masterPowerToggle = document.getElementById('masterPowerToggle');
+    const privacyToggle = document.getElementById('privacyToggle');
+    const cameraOffOverlay = document.getElementById('cameraOffOverlay');
+    const privacyOverlay = document.getElementById('privacyOverlay');
+    const calibrateBtn = document.getElementById('calibrateBtn');
+    
+    // Status Boxes
+    const postureStatus = document.getElementById('postureStatus');
+    const calText = document.getElementById('calText');
+    const visualStatus = document.getElementById('visualStatus');
+    const vocalStatus = document.getElementById('vocalStatus');
+    const drowsStatus = document.getElementById('drowsStatus');
+
+    let streamRef = null;
+    let predictInterval = null;
+    let mockInterval = null;
+    
+    let baseProbabilities = { visual: 20, vocal: 20, drowsiness: 20 };
+
+    // --- SWITCH LOGIC ---
+
+    masterPowerToggle.addEventListener('change', (e) => {
+        if (e.target.checked) {
+            startSystem();
+        } else {
+            stopSystem();
+        }
+    });
+
+    privacyToggle.addEventListener('change', (e) => {
+        // Show the dark overlay if checked, hide it if unchecked (revealing the video)
+        privacyOverlay.style.display = e.target.checked ? 'flex' : 'none';
+    });
+
+
+    // --- HARDWARE & INTERVAL CONTROLS ---
+
+    function startSystem() {
+        postureStatus.className = "status-value val-wait";
+        postureStatus.innerText = "Initializing AI...";
+        calText.innerText = "Loading Model...";
+
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => { 
+                streamRef = stream;
+                video.srcObject = stream; 
+                
+                // Update UI State: Hide "Offline", Show "Privacy Mode", Enable controls
+                cameraOffOverlay.style.display = 'none';
+                
+                // Enforce Privacy Mode ON by default when starting
+                privacyToggle.disabled = false;
+                privacyToggle.checked = true;
+                privacyOverlay.style.display = 'flex'; 
+
+                calibrateBtn.disabled = false;
+                
+                fetchBaseProbabilities();
+                
+                if(!predictInterval) predictInterval = setInterval(captureAndPredict, 500); 
+                if(!mockInterval) mockInterval = setInterval(updateMockSensors, 2500); 
+            })
+            .catch(err => {
+                masterPowerToggle.checked = false;
+                postureStatus.className = "status-value val-bad";
+                postureStatus.innerText = "Camera Denied";
+                alert("ErgoSense needs camera permissions to function.");
+            });
+    }
+
+    function stopSystem() {
+        if (streamRef) {
+            streamRef.getTracks().forEach(track => track.stop());
+            video.srcObject = null;
+            streamRef = null;
+        }
+        
+        if (predictInterval) clearInterval(predictInterval);
+        if (mockInterval) clearInterval(mockInterval);
+        predictInterval = null;
+        mockInterval = null;
+        
+        // Reset UI: Show "Offline", Disable & Check Privacy Toggle
+        cameraOffOverlay.style.display = 'flex';
+        privacyOverlay.style.display = 'none';
+        privacyToggle.checked = true; 
+        privacyToggle.disabled = true;
+        calibrateBtn.disabled = true;
+        
+        const resetStatus = (el, text) => { el.className = "status-value val-wait"; el.innerText = text; };
+        resetStatus(postureStatus, "System Paused");
+        resetStatus(visualStatus, "--");
+        resetStatus(vocalStatus, "--");
+        resetStatus(drowsStatus, "--");
+        calText.innerText = "Waiting for camera...";
+    }
+
+    // --- 1. REAL POSTURE PIPELINE ---
+
+    function captureAndPredict() {
+        if (!masterPowerToggle.checked || video.videoWidth === 0) return; 
+        
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = canvas.toDataURL('image/jpeg', 0.8);
+
+        fetch('/predict_frame', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: imageData })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'success') {
+                postureStatus.innerText = data.result;
+                postureStatus.className = data.is_bad ? "status-value val-bad" : "status-value val-good";
+                calText.innerText = data.calibrated ? "Using Personalized Calibration ✓" : "Using Standard ML Model";
+            } else {
+                postureStatus.innerText = "No Person Detected";
+                postureStatus.className = "status-value val-wait";
+            }
+        }).catch(err => console.log("Processing..."));
+    }
+
+    // --- CALIBRATION ---
+
+    calibrateBtn.addEventListener('click', () => {
+        calibrateBtn.innerText = "Calibrating...";
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = canvas.toDataURL('image/jpeg', 0.8);
+
+        fetch('/calibrate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: imageData })
+        })
+        .then(res => res.json())
+        .then(data => {
+            alert(data.message);
+            calibrateBtn.innerText = "🎯 Calibrate Baseline";
+        });
+    });
+
+    // --- 2. MOCK SENSOR PIPELINE ---
+
+    function fetchBaseProbabilities() {
+        fetch('/api/stress_data').then(res => res.json()).then(data => {
+            if(data.labels) {
+                const hr = new Date().getHours();
+                baseProbabilities.visual = data.visual[hr];
+                baseProbabilities.vocal = data.vocal[hr];
+                baseProbabilities.drowsiness = data.drowsiness[hr];
+            }
+        }).catch(e => console.log("Using default weights."));
+    }
+
+    function updateMockSensors() {
+        const setMockStatus = (el, probability) => {
+            const isStressed = (Math.random() * 100) < probability;
+            el.innerText = isStressed ? "Stress Detected" : "Optimal";
+            el.className = isStressed ? "status-value val-bad" : "status-value val-good";
+        };
+
+        setMockStatus(visualStatus, baseProbabilities.visual);
+        setMockStatus(vocalStatus, baseProbabilities.vocal);
+        setMockStatus(drowsStatus, baseProbabilities.drowsiness);
+    }
+
+</script>
+</body>
+</html>
