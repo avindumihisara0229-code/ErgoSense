@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ErgoSense | Scanner</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #000000;
+            --glass-bg: rgba(28, 28, 30, 0.5);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --text-main: #f5f5f7;
+            --text-muted: #86868b;
+            --apple-blue: #0A84FF;
+            --apple-green: #30D158;
+            --apple-red: #FF453A;
+            --apple-purple: #BF5AF2;
+            --apple-orange: #FF9F0A;
+        }
+
+        body { 
+            background-color: var(--bg-color); 
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(10, 132, 255, 0.15), transparent 25%),
+                radial-gradient(circle at 85% 30%, rgba(191, 90, 242, 0.15), transparent 25%);
+            background-attachment: fixed;
+            color: var(--text-main); 
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            min-height: 100vh;
+        }
+
+        /* Floating Crystal Navbar */
+        .navbar { 
+            background: rgba(0, 0, 0, 0.4); 
+            backdrop-filter: blur(20px); 
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--glass-border); 
+            padding: 15px 0;
+        }
+        .navbar-brand { font-weight: 700; letter-spacing: 1.5px; color: var(--text-main) !important; font-size: 1.3rem; }
+        .nav-link { color: var(--text-muted) !important; font-weight: 500; transition: color 0.3s ease; }
+        .nav-link:hover, .nav-link.active { color: var(--text-main) !important; }
+
+        /* Crystal Panels */
+        .glass-panel { 
+            background: var(--glass-bg); 
+            backdrop-filter: blur(30px); 
+            -webkit-backdrop-filter: blur(30px);
+            border: 1px solid var(--glass-border); 
+            border-radius: 24px; 
+            padding: 24px; 
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2); 
+        }
+
+        /* Video Container */
+        .video-container {
+            position: relative; width: 100%; border-radius: 16px; overflow: hidden;
+            background: #000; aspect-ratio: 16/9; max-height: 400px;
+            display: flex; align-items: center; justify-content: center; margin-top: 20px;
+            box-shadow: inset 0 0 0 1px var(--glass-border);
+        }
+        #videoElement { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+
+        /* Overlays */
+        #cameraOffOverlay, #privacyOverlay {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 10;
+        }
+        #cameraOffOverlay { background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(10px); }
+        #privacyOverlay { background: rgba(28, 28, 30, 0.95); backdrop-filter: blur(15px); display: none; z-index: 5; }
+        .overlay-icon { font-size: 3rem; margin-bottom: 10px; }
+        .overlay-title { font-size: 1.4rem; font-weight: 600; margin-bottom: 4px; color: var(--text-main); }
+        .overlay-text { font-size: 0.95rem; color: var(--text-muted); }
+
+        /* iOS Switches */
+        .form-switch .form-check-input { 
+            width: 3.2em; height: 1.6em; cursor: pointer; 
+            background-color: rgba(255,255,255,0.2); border: none;
+            transition: background-color 0.3s ease;
+        }
+        .form-check-input:checked { background-color: var(--apple-green); }
+        .form-check-input:focus { box-shadow: none; border-color: transparent; }
+        .switch-title { font-weight: 600; font-size: 1.05rem; letter-spacing: 0.3px; }
+        .switch-hint { font-size: 0.8rem; color: var(--text-muted); margin-left: 55px; margin-top: -5px; }
+
+        /* Premium Buttons */
+        .btn-calibrate {
+            background: var(--apple-blue); color: white; padding: 12px 20px;
+            border-radius: 14px; font-weight: 600; width: 100%;
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); font-size: 1rem; border: none;
+        }
+        .btn-calibrate:hover:not(:disabled) { transform: scale(1.02); background: #148eff; }
+        .btn-calibrate:active:not(:disabled) { transform: scale(0.98); }
+        .btn-calibrate:disabled { background: rgba(255,255,255,0.1); color: var(--text-muted); cursor: not-allowed; }
+
+        /* Status Widget Boxes */
+        .status-box {
+            padding: 16px; border-radius: 18px; text-align: center; margin-bottom: 14px;
+            background: rgba(255, 255, 255, 0.03); border: 1px solid var(--glass-border);
+            transition: all 0.4s ease;
+        }
+        .status-box h6 { font-weight: 600; font-size: 0.75rem; letter-spacing: 1px; margin-bottom: 8px; text-transform: uppercase; }
+        .status-value { font-size: 1.3rem; font-weight: 700; padding: 10px; border-radius: 12px; transition: all 0.3s ease; }
+        
+        .val-wait { background: rgba(134, 134, 139, 0.1); color: var(--text-muted); }
+        .val-good { background: rgba(48, 209, 88, 0.15); color: var(--apple-green); }
+        .val-bad { background: rgba(255, 69, 58, 0.15); color: var(--apple-red); }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg mb-4">
+    <div class="container-fluid px-lg-5">
+        <a class="navbar-brand" href="/">ErgoSense</a>
+        <div class="collapse navbar-collapse">
+            <ul class="navbar-nav ms-auto">
+                <li class="nav-item"><a class="nav-link active" href="/">Scanner</a></li>
+                <li class="nav-item"><a class="nav-link" href="/analytics">Analytics</a></li>
+                <li class="nav-item"><a class="nav-link" href="/help">Help</a></li>
+            </ul>
+        </div>
+    </div>
+</nav>
+
+<div class="container-fluid px-lg-5 mb-5">
+    <div class="row g-4">
+        
+        <div class="col-lg-7">
+            <div class="glass-panel h-100">
+                <div class="row align-items-center mb-2">
+                    <div class="col-md-7">
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="masterPowerToggle">
+                            <label class="form-check-label switch-title text-white ps-2" for="masterPowerToggle">Vision System</label>
+                            <div class="switch-hint">Enable hardware tracking</div>
+                        </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="privacyToggle" checked disabled>
+                            <label class="form-check-label switch-title ps-2" style="color: #d2d2d7;" for="privacyToggle">Privacy Shield</label>
+                            <div class="switch-hint">Hide local camera feed</div>
+                        </div>
+                    </div>
+                    <div class="col-md-5 mt-3 mt-md-0">
+                        <button id="calibrateBtn" class="btn btn-calibrate" disabled>
+                            Calibrate Baseline
+                        </button>
+                    </div>
+                </div>
+
+                <div class="video-container">
+                    <video id="videoElement" autoplay playsinline></video>
+                    
+                    <div id="cameraOffOverlay">
+                        <span class="overlay-icon">📷</span>
+                        <div class="overlay-title">Camera Inactive</div>
+                        <div class="overlay-text">Toggle Vision System to begin</div>
+                    </div>
+
+                    <div id="privacyOverlay">
+                        <span class="overlay-icon">🛡️</span>
+                        <div class="overlay-title" style="color: var(--apple-green);">Privacy Shield Active</div>
+                        <div class="overlay-text">Analyzing securely in background</div>
+                    </div>
+                </div>
+                <canvas id="canvasElement" style="display:none;"></canvas>
+            </div>
+        </div>
+
+        <div class="col-lg-5">
+            <div class="glass-panel h-100 d-flex flex-column justify-content-between">
+                
+                <div class="status-box">
+                    <h6 style="color: var(--apple-green);">Posture Framework</h6>
+                    <div id="postureStatus" class="status-value val-wait">Standby</div>
+                    <div id="calText" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 6px;">Awaiting activation</div>
+                </div>
+
+                <div class="status-box">
+                    <h6 style="color: var(--apple-blue);">Visual Strain Sensor</h6>
+                    <div id="visualStatus" class="status-value val-wait">--</div>
+                </div>
+
+                <div class="status-box">
+                    <h6 style="color: var(--apple-orange);">Vocal Stress Monitor</h6>
+                    <div id="vocalStatus" class="status-value val-wait">--</div>
+                </div>
+
+                <div class="status-box" style="margin-bottom: 0;">
+                    <h6 style="color: var(--apple-purple);">Drowsiness Index</h6>
+                    <div id="drowsStatus" class="status-value val-wait">--</div>
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // Exact same working JavaScript as before
+    const video = document.getElementById('videoElement');
+    const canvas = document.getElementById('canvasElement');
+    const ctx = canvas.getContext('2d');
+    const masterPowerToggle = document.getElementById('masterPowerToggle');
+    const privacyToggle = document.getElementById('privacyToggle');
+    const cameraOffOverlay = document.getElementById('cameraOffOverlay');
+    const privacyOverlay = document.getElementById('privacyOverlay');
+    const calibrateBtn = document.getElementById('calibrateBtn');
+    const postureStatus = document.getElementById('postureStatus');
+    const calText = document.getElementById('calText');
+    const visualStatus = document.getElementById('visualStatus');
+    const vocalStatus = document.getElementById('vocalStatus');
+    const drowsStatus = document.getElementById('drowsStatus');
+
+    let streamRef = null, predictInterval = null, mockInterval = null;
+    let baseProbabilities = { visual: 20, vocal: 20, drowsiness: 20 };
+
+    masterPowerToggle.addEventListener('change', (e) => e.target.checked ? startSystem() : stopSystem());
+    privacyToggle.addEventListener('change', (e) => privacyOverlay.style.display = e.target.checked ? 'flex' : 'none');
+
+    function startSystem() {
+        postureStatus.className = "status-value val-wait"; postureStatus.innerText = "Initializing Engine...";
+        calText.innerText = "Loading Neural Net...";
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => { 
+                streamRef = stream; video.srcObject = stream; 
+                cameraOffOverlay.style.display = 'none';
+                privacyToggle.disabled = false; privacyToggle.checked = true; privacyOverlay.style.display = 'flex'; 
+                calibrateBtn.disabled = false;
+                fetchBaseProbabilities();
+                if(!predictInterval) predictInterval = setInterval(captureAndPredict, 500); 
+                if(!mockInterval) mockInterval = setInterval(updateMockSensors, 2500); 
+            })
+            .catch(err => { masterPowerToggle.checked = false; postureStatus.className = "status-value val-bad"; postureStatus.innerText = "Camera Denied"; });
+    }
+
+    function stopSystem() {
+        if (streamRef) { streamRef.getTracks().forEach(track => track.stop()); video.srcObject = null; streamRef = null; }
+        if (predictInterval) clearInterval(predictInterval); if (mockInterval) clearInterval(mockInterval);
+        predictInterval = mockInterval = null;
+        cameraOffOverlay.style.display = 'flex'; privacyOverlay.style.display = 'none';
+        privacyToggle.checked = true; privacyToggle.disabled = true; calibrateBtn.disabled = true;
+        
+        const rst = (el, txt) => { el.className = "status-value val-wait"; el.innerText = txt; };
+        rst(postureStatus, "Standby"); rst(visualStatus, "--"); rst(vocalStatus, "--"); rst(drowsStatus, "--");
+        calText.innerText = "Awaiting activation";
+    }
+
+    function captureAndPredict() {
+        if (!masterPowerToggle.checked || video.videoWidth === 0) return; 
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        fetch('/predict_frame', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: canvas.toDataURL('image/jpeg', 0.8) }) })
+        .then(res => res.json()).then(data => {
+            if (data.status === 'success') {
+                postureStatus.innerText = data.result;
+                postureStatus.className = data.is_bad ? "status-value val-bad" : "status-value val-good";
+                calText.innerText = data.calibrated ? "Custom Baseline Active ✓" : "Standard Neural Net Active";
+            } else { postureStatus.innerText = "Searching..."; postureStatus.className = "status-value val-wait"; }
+        }).catch(e => console.log("Processing..."));
+    }
+
+    calibrateBtn.addEventListener('click', () => {
+        calibrateBtn.innerText = "Processing...";
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        fetch('/calibrate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: canvas.toDataURL('image/jpeg', 0.8) }) })
+        .then(res => res.json()).then(data => { alert(data.message); calibrateBtn.innerText = "Calibrate Baseline"; });
+    });
+
+    function fetchBaseProbabilities() {
+        fetch('/api/stress_data').then(res => res.json()).then(data => {
+            if(data.labels) { const hr = new Date().getHours(); baseProbabilities = { visual: data.visual[hr], vocal: data.vocal[hr], drowsiness: data.drowsiness[hr] }; }
+        });
+    }
+
+    function updateMockSensors() {
+        const setMock = (el, prob) => {
+            const isStress = (Math.random() * 100) < prob;
+            el.innerText = isStress ? "Stress Detected" : "Optimal";
+            el.className = isStress ? "status-value val-bad" : "status-value val-good";
+        };
+        setMock(visualStatus, baseProbabilities.visual); setMock(vocalStatus, baseProbabilities.vocal); setMock(drowsStatus, baseProbabilities.drowsiness);
+    }
+</script>
+</body>
+</html>
