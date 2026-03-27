@@ -23,21 +23,10 @@ source venv/bin/activate
 
 Once the virtual environment is activated, create a requirements.txt file in your project directory and paste the following contents:
 
-Flask==3.1.2
-opencv-python==4.13.0.92
-numpy==1.26.4
-mediapipe==0.10.14
-joblib==1.5.2
-librosa==0.11.0
-static_ffmpeg==3.0
-tensorflow==2.16.1
-keras==3.12.0
-scikit-learn==1.8.0
 
 To install the dependencies, run the following command in your terminal:
 
-pip install -r requirements.txt
-3. Initialize FFmpeg (For Vocal Stress)
+pip install mediapipe==0.10.14 librosa==0.11.0 google-generativeai==0.8.5 Flask==3.1.2 tensorflow==2.16.1 keras==3.12.0 
 
 The static_ffmpeg library is used to handle audio chunks for vocal stress detection. Run the following command to download and set up the necessary binaries:
 
