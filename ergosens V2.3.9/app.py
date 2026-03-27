@@ -11,11 +11,18 @@ import librosa
 import tempfile
 import json
 import pickle
+import google.generativeai as genai # NEW: Added for Chatbot
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
 from tensorflow import keras
 
 app = Flask(__name__)
+
+# --- GEMINI AI SETUP ---
+# Securely configure the API key on the backend
+genai.configure(api_key="AIzaSyBSFW4SyigNmGwN0GZGGkU01y1ENcfRrak")
+# UPDATED to the working model version:
+gemini_model = genai.GenerativeModel('gemini-2.0-flash-001')
 
 # --- CONFIGURATION ---
 MODEL_PATH = 'posture_model.joblib'
@@ -328,6 +335,22 @@ def index(): return render_template('index.html')
 
 @app.route('/analytics')
 def analytics_page(): return render_template('analytics.html')
+
+# --- CHATBOT BACKEND ROUTE ---
+@app.route('/chatbot', methods=['POST'])
+def chatbot_response():
+    data = request.json
+    user_msg = data.get('message', '')
+    context = data.get('context', '')
+    
+    prompt = f"{context} User asked: '{user_msg}'. Provide a very concise, empathetic wellness recommendation. Keep it short."
+    
+    try:
+        response = gemini_model.generate_content(prompt)
+        return jsonify({'reply': response.text})
+    except Exception as e:
+        print(f"Chatbot Error: {e}")
+        return jsonify({'reply': "I'm having a little trouble connecting to my brain right now, but please remember to sit up straight and take a deep breath!"}), 500
 
 @app.route('/predict_frame', methods=['POST'])
 def predict_frame():
