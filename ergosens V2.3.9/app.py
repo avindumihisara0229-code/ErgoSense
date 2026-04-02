@@ -20,7 +20,7 @@ app = Flask(__name__)
 
 # --- GEMINI AI SETUP ---
 # Securely configure the API key on the backend
-genai.configure(api_key="AIzaSyBSFW4SyigNmGwN0GZGGkU01y1ENcfRr")
+genai.configure(api_key="AIzaSyBSFW4SyigNmGwN0GZGGkU01y1ENcfRrak")
 # UPDATED to the working model version:
 gemini_model = genai.GenerativeModel('gemini-2.0-flash-001')
 
@@ -36,7 +36,8 @@ YAWN_MODEL_PATH = os.path.join(BASE_DIR, "models", "yawn_model.pkl")
 EYE_MODEL_PATH = os.path.join(BASE_DIR, "models", "eye_cnn_model.keras")
 
 # SENSITIVITY & PERSISTENCE
-STRESS_PERSISTENCE_LIMIT = 300 
+# ---> CHANGED: Lowered from 300 to 90 (approx 3 seconds) for much higher sensitivity <---
+STRESS_PERSISTENCE_LIMIT = 90 
 SENSITIVITY_THRESHOLD = 0.3   
 FRONT_SENSITIVITY = 0.15
 LOUDNESS_THRESHOLD = 0.006     
@@ -46,8 +47,8 @@ EYE_AR_THRESH = 0.21           # Added back EAR threshold for fallback
 MAR_THRESH = 0.8             # Set to 0.60 to prevent talking from triggering yawns
 YAWN_SECONDS_LIMIT = 2.5       # MUST open mouth for 2.5 full seconds to trigger
 SLOW_BLINK_SECONDS = 1.0       # eye closed 1+ second = slow/drowsy blink
-DROWSY_WINDOW = 300            # 5 minutes in seconds
-SLOW_BLINK_THRESHOLD = 3       # 3+ slow blinks in 5 min = drowsy
+DROWSY_WINDOW = 120            # 2 minutes in seconds
+SLOW_BLINK_THRESHOLD = 3       # 3+ slow blinks in 2 min = drowsy
 
 # --- GLOBAL TRACKERS ---
 stress_tracker = {'streak': 0}
@@ -237,15 +238,28 @@ def analyze_multimodal(image):
         if stress_model and stress_scaler and stress_encoder:
             try:
                 scaled_feats = stress_scaler.transform([feats])
-                pred_encoded = stress_model.predict(scaled_feats)
-                pred_label = stress_encoder.inverse_transform(pred_encoded)[0]
                 
-                if pred_label == "stress":
+                # ---> CHANGED: Try to use predict_proba for finer control if available <---
+                if hasattr(stress_model, "predict_proba"):
+                    probs = stress_model.predict_proba(scaled_feats)[0]
+                    # Assuming 'stress' is one of the classes, find its index
+                    stress_idx = list(stress_encoder.classes_).index('stress')
+                    # If probability of stress is > 40% (instead of strict 50%), flag it
+                    is_stressed = probs[stress_idx] > 0.40
+                else:
+                    # Fallback to strict prediction if probability isn't supported
+                    pred_encoded = stress_model.predict(scaled_feats)
+                    pred_label = stress_encoder.inverse_transform(pred_encoded)[0]
+                    is_stressed = (pred_label == "stress")
+
+                if is_stressed:
                     stress_tracker['streak'] += 1
                     if stress_tracker['streak'] >= STRESS_PERSISTENCE_LIMIT: 
                         visual_status = "Stressed"
                 else: 
-                    stress_tracker['streak'] = 0
+                    # ---> CHANGED: Don't instantly reset to 0. Subtract 2 so it 'cools down'. <---
+                    # This prevents one single non-stressed frame from ruining a 89-frame streak
+                    stress_tracker['streak'] = max(0, stress_tracker['streak'] - 2)
             except Exception as e:
                 print(f"Stress Prediction Error: {e}")
 
@@ -256,7 +270,7 @@ def analyze_multimodal(image):
         now = datetime.now().timestamp()
 
         # ML-Based Slow Blink Tracking (CNN OR EAR Fallback)
-        is_closed = (eye_state == "Closed") or (ear_val < EYE_AR_THRESH)
+        is_closed = (eye_state == "Closed")
         
         if is_closed:
             if drowsy_tracker['eye_closed_start'] is None:
