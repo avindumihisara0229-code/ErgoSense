@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ErgoSense | Analytics</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #000000;
+            --glass-bg: rgba(28, 28, 30, 0.5);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --text-main: #f5f5f7;
+            --text-muted: #86868b;
+            --apple-blue: #0A84FF;
+            --apple-green: #30D158;
+            --apple-red: #FF453A;
+            --apple-orange: #FF9F0A;
+            --apple-purple: #BF5AF2;
+        }
+
+        body { 
+            background-color: var(--bg-color); 
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(10, 132, 255, 0.15), transparent 25%),
+                radial-gradient(circle at 85% 30%, rgba(191, 90, 242, 0.15), transparent 25%);
+            background-attachment: fixed;
+            color: var(--text-main); 
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif; 
+            min-height: 100vh;
+        }
+
+        .navbar { background: rgba(0, 0, 0, 0.4); backdrop-filter: blur(20px); border-bottom: 1px solid var(--glass-border); padding: 15px 0; }
+        .navbar-brand { font-weight: 700; color: var(--text-main) !important; font-size: 1.3rem; }
+        .nav-link { color: var(--text-muted) !important; font-weight: 500; transition: color 0.3s ease; }
+        .nav-link:hover, .nav-link.active { color: var(--text-main) !important; }
+
+        .glass-panel { 
+            background: var(--glass-bg); backdrop-filter: blur(30px); 
+            border: 1px solid var(--glass-border); border-radius: 24px; padding: 24px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2); 
+        }
+
+        .table-dark { background-color: transparent; font-size: 0.85rem;}
+        .table-dark td, .table-dark th { background: transparent; border-bottom: 1px solid rgba(255,255,255,0.05); color: var(--text-main); padding: 10px 8px;}
+        .table-dark th { color: var(--text-muted); text-transform: uppercase; }
+        
+        .chart-wrapper { position: relative; height: 180px; width: 100%; display: flex; align-items: center; justify-content: center;}
+        .table-wrapper { max-height: 180px; overflow-y: auto; overflow-x: hidden; padding-right: 5px; }
+
+        .golden-hour-text { font-size: 4rem; font-weight: 700; background: linear-gradient(135deg, #30D158, #0A84FF); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 10px 0; }
+        .stress-peak-text { font-size: 3rem; font-weight: 700; background: linear-gradient(135deg, #FF453A, #FF9F0A); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 10px 0; }
+
+        .insight-card { border-left: 4px solid var(--apple-blue); padding-left: 15px; margin-bottom: 20px; }
+        .insight-title { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 5px; }
+        .insight-value { font-size: 1.1rem; font-weight: 600; color: var(--text-main); }
+
+        .session-badge {
+            display: inline-block; padding: 4px 12px; border-radius: 20px; background: rgba(255,255,255,0.1);
+            font-size: 0.7rem; font-weight: 600; color: var(--apple-blue); border: 1px solid var(--apple-blue); margin-bottom: 10px;
+        }
+
+        /* NEW: Toggle Styles */
+        .history-toggle-container {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 5px;
+            display: inline-flex;
+            border: 1px solid var(--glass-border);
+        }
+        .toggle-btn {
+            padding: 6px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+            transition: 0.3s;
+            color: var(--text-muted);
+        }
+        .toggle-btn.active {
+            background: var(--apple-blue);
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg mb-4">
+    <div class="container-fluid px-lg-5">
+        <a class="navbar-brand" href="/">ErgoSense</a>
+        <div class="collapse navbar-collapse">
+            <ul class="navbar-nav ms-auto">
+                <li class="nav-item"><a class="nav-link" href="/">Scanner</a></li>
+                <li class="nav-item"><a class="nav-link active" href="/analytics">Analytics</a></li>
+            </ul>
+        </div>
+    </div>
+</nav>
+
+<div class="container-fluid px-lg-5 mb-5">
+    
+    <div class="d-flex justify-content-end mb-3">
+        <div class="history-toggle-container">
+            <div id="toggleToday" class="toggle-btn active" onclick="setHistoryView('today')">Today</div>
+            <div id="toggleAll" class="toggle-btn" onclick="setHistoryView('all')">Historical Trends</div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-md-9 col-xl-8">
+            <div class="glass-panel">
+                <div class="d-flex justify-content-between">
+                    <h6 id="chartTitle" style="color: var(--text-main); font-weight: 600; margin-bottom: 20px;">24-Hour Multi-Modal Stress & Fatigue Forecast</h6>
+                    <div id="sessionStatus" class="session-badge">SYSTEM ACTIVE</div>
+                </div>
+                <div style="height: 350px; width: 100%;"><canvas id="stressTrendChart"></canvas></div>
+            </div>
+        </div>
+        
+        <div class="col-md-3 col-xl-4">
+            <div class="row g-4 h-100">
+                <div class="col-12">
+                    <div class="glass-panel text-center d-flex flex-column justify-content-center align-items-center" style="height: 48%;">
+                        <h6 id="optimalLabel" style="color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px;">Session Optimal Window</h6>
+                        <div id="bestTimeDisplay" class="golden-hour-text">--:--</div>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <div class="glass-panel text-center d-flex flex-column justify-content-center align-items-center" style="height: 48%;">
+                        <h6 id="peakLabel" style="color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px;">Session Peak Intensity</h6>
+                        <div id="worstTimeDisplay" class="stress-peak-text">--:--</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-md-4">
+            <div class="glass-panel h-100">
+                <h6 style="color: var(--text-main); font-weight: 600; margin-bottom: 20px;">Daily Biometric Balance</h6>
+                <div style="height: 250px;"><canvas id="radarBalanceChart"></canvas></div>
+            </div>
+        </div>
+
+        <div class="col-md-8">
+            <div class="glass-panel h-100">
+                <h6 style="color: var(--text-main); font-weight: 600; margin-bottom: 20px;">System Intelligence & Recommendations</h6>
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="insight-card" style="border-color: var(--apple-purple);">
+                            <div class="insight-title">Fatigue Warning</div>
+                            <div id="fatigueInsight" class="insight-value">Monitoring daily trends...</div>
+                        </div>
+                        <div class="insight-card" style="border-color: var(--apple-green);">
+                            <div class="insight-title">Posture Persistence</div>
+                            <div id="postureInsight" class="insight-value">Calibration active.</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="insight-card" style="border-color: var(--apple-orange);">
+                            <div class="insight-title">Vocal Energy</div>
+                            <div id="vocalInsight" class="insight-value">Stable frequency detected.</div>
+                        </div>
+                        <div class="insight-card" style="border-color: var(--apple-blue);">
+                            <div class="insight-title">Stress Resilience</div>
+                            <div id="stressInsight" class="insight-value">Calculating AI drift...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-md-6 col-xl-3">
+            <div class="glass-panel">
+                <h6 style="color: var(--apple-green); font-weight: 600; margin-bottom: 20px;">Posture Framework</h6>
+                <div class="chart-wrapper mb-3"><canvas id="postureChart"></canvas></div>
+                <div class="table-wrapper">
+                    <table class="table table-dark"><tbody id="historyTableBody"></tbody></table>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6 col-xl-3">
+            <div class="glass-panel">
+                <h6 style="color: var(--apple-orange); font-weight: 600; margin-bottom: 20px;">Vocal Telemetry</h6>
+                <div class="chart-wrapper mb-3"><canvas id="vocalChart"></canvas></div>
+                <div class="table-wrapper">
+                    <table class="table table-dark"><tbody id="vocalTableBody"></tbody></table>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6 col-xl-3">
+            <div class="glass-panel">
+                <h6 style="color: var(--apple-blue); font-weight: 600; margin-bottom: 20px;">Facial Stress (SVM)</h6>
+                <div class="chart-wrapper mb-3"><canvas id="visualChart"></canvas></div>
+                <div class="table-wrapper">
+                    <table class="table table-dark"><tbody id="visualTableBody"></tbody></table>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6 col-xl-3">
+            <div class="glass-panel">
+                <h6 style="color: var(--apple-purple); font-weight: 600; margin-bottom: 20px;">Drowsiness Index</h6>
+                <div class="chart-wrapper mb-3"><canvas id="drowsChart"></canvas></div>
+                <div class="table-wrapper">
+                    <table class="table table-dark"><tbody id="drowsTableBody"></tbody></table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    Chart.defaults.color = '#86868b';
+    Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "SF Pro Display"';
+    const clrGood = '#30D158', clrBad = '#FF453A';
+    let currentView = 'today'; // NEW: Track current view state
+
+    function setHistoryView(view) {
+        currentView = view;
+        document.getElementById('toggleToday').classList.toggle('active', view === 'today');
+        document.getElementById('toggleAll').classList.toggle('active', view === 'all');
+        
+        // Update labels based on view
+        document.getElementById('chartTitle').innerText = view === 'today' ? '24-Hour Session Forecast' : 'Lifetime Stress Trends';
+        document.getElementById('optimalLabel').innerText = view === 'today' ? 'Session Optimal Window' : 'Lifetime Optimal Window';
+        document.getElementById('peakLabel').innerText = view === 'today' ? 'Session Peak Intensity' : 'Lifetime Peak Intensity';
+        
+        updateTrend(); // Refresh chart with new filter logic
+    }
+
+    function createDoughnutChart(ctxId, colorAccent) {
+        return new Chart(document.getElementById(ctxId).getContext('2d'), {
+            type: 'doughnut',
+            data: { datasets: [{ data: [1, 0], backgroundColor: [colorAccent, 'rgba(255,255,255,0.05)'], borderWidth: 0 }] },
+            options: { cutout: '85%', plugins: { legend: false }, responsive: true, maintainAspectRatio: false }
+        });
+    }
+
+    const charts = {
+        pos: createDoughnutChart('postureChart', '#30D158'),
+        voc: createDoughnutChart('vocalChart', '#FF9F0A'),
+        vis: createDoughnutChart('visualChart', '#0A84FF'),
+        dro: createDoughnutChart('drowsChart', '#BF5AF2')
+    };
+
+    let trendChart = new Chart(document.getElementById('stressTrendChart').getContext('2d'), {
+        type: 'line', 
+        data: { labels: [], datasets: [] },
+        options: { 
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { display: true, position: 'top', align: 'end' } },
+            scales: { 
+                y: { min: 0, max: 100, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { callback: v => v + '%' } },
+                x: { grid: { display: false } }
+            } 
+        }
+    });
+
+    let radarChart = new Chart(document.getElementById('radarBalanceChart').getContext('2d'), {
+        type: 'radar',
+        data: {
+            labels: ['Posture', 'Vocal', 'Stress', 'Drowsy'],
+            datasets: [{
+                label: 'Current Impact',
+                data: [0, 0, 0, 0],
+                backgroundColor: 'rgba(10, 132, 255, 0.2)',
+                borderColor: '#0A84FF',
+                pointBackgroundColor: '#0A84FF'
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: { r: { grid: { color: 'rgba(255,255,255,0.1)' }, angleLines: { color: 'rgba(255,255,255,0.1)' }, pointLabels: { color: '#86868b' }, ticks: { display: false } } },
+            plugins: { legend: { display: false } }
+        }
+    });
+
+    function updateData() {
+        fetch('/get_history_all').then(res => res.json()).then(data => {
+            let pG = 0, pB = 0, vG = 0, vB = 0, dG = 0, dB = 0;
+            document.getElementById('historyTableBody').innerHTML = "";
+            document.getElementById('visualTableBody').innerHTML = "";
+            document.getElementById('drowsTableBody').innerHTML = "";
+
+            data.forEach(row => {
+                if (row.mode !== "Vocal") {
+                    const time = row.time.split(" ")[1];
+                    if(row.posture === "Correct") pG++; else pB++;
+                    document.getElementById('historyTableBody').innerHTML += `<tr><td>${time}</td><td style="color:${row.posture==='Correct'?clrGood:clrBad}">${row.posture}</td></tr>`;
+                    if(row.visual === "Optimal") vG++; else vB++;
+                    document.getElementById('visualTableBody').innerHTML += `<tr><td>${time}</td><td style="color:${row.visual==='Optimal'?clrGood:clrBad}">${row.visual}</td></tr>`;
+                    if(row.drowsy === "Alert") dG++; else dB++;
+                    document.getElementById('drowsTableBody').innerHTML += `<tr><td>${time}</td><td style="color:${row.drowsy==='Alert'?clrGood:clrBad}">${row.drowsy}</td></tr>`;
+                }
+            });
+            charts.pos.data.datasets[0].data = [pG, pB]; charts.pos.update();
+            charts.vis.data.datasets[0].data = [vG, vB]; charts.vis.update();
+            charts.dro.data.datasets[0].data = [dG, dB]; charts.dro.update();
+            
+            const postureScore = (pG / (pG + pB)) * 100;
+            document.getElementById('postureInsight').innerText = postureScore > 80 ? "Excellent alignment today." : "Frequent slumping detected.";
+        });
+
+        fetch('/get_vocal_history').then(res => res.json()).then(data => {
+            let g = 0, b = 0;
+            document.getElementById('vocalTableBody').innerHTML = "";
+            data.forEach(row => {
+                const isBad = row.status === "Stress Detected";
+                if(!isBad) g++; else b++;
+                const time = row.time.split(" ")[1];
+                document.getElementById('vocalTableBody').innerHTML += `<tr><td>${time}</td><td style="color:${!isBad?clrGood:clrGood}">${row.status}</td></tr>`;
+            });
+            charts.voc.data.datasets[0].data = [g, b]; charts.voc.update();
+        });
+    }
+
+    function updateTrend() {
+        fetch('/api/stress_data').then(res => res.json()).then(data => {
+            trendChart.data = {
+                labels: data.labels,
+                datasets: [
+                    { label: 'Posture', data: data.posture, borderColor: '#30D158', backgroundColor: 'transparent', tension: 0.4, borderWidth: 2, pointRadius: 0 },
+                    { label: 'Vocal', data: data.vocal, borderColor: '#FF9F0A', backgroundColor: 'transparent', tension: 0.4, borderWidth: 2, pointRadius: 0 },
+                    { label: 'Visual', data: data.visual, borderColor: '#0A84FF', backgroundColor: 'transparent', tension: 0.4, borderWidth: 2, pointRadius: 0 },
+                    { label: 'Drowsy', data: data.drowsiness, borderColor: '#BF5AF2', backgroundColor: 'transparent', tension: 0.4, borderWidth: 2, pointRadius: 0 },
+                    { 
+                        label: 'Unified Stress Index', 
+                        data: data.overall, 
+                        borderColor: '#FFFFFF', 
+                        backgroundColor: 'rgba(255, 255, 255, 0.05)', 
+                        borderWidth: 4, 
+                        fill: true, 
+                        tension: 0.4,
+                        pointBackgroundColor: '#FFFFFF'
+                    }
+                ]
+            };
+            trendChart.update();
+
+            // NEW: Updated Calculation logic to handle view switching
+            let activeIndices = [];
+            if (currentView === 'today') {
+                // Only consider hours where system was actually recording
+                activeIndices = data.overall.map((val, idx) => val > 0 ? idx : -1).filter(idx => idx !== -1);
+            } else {
+                // Historical view considers all data (averages provided by backend)
+                activeIndices = data.overall.map((_, idx) => idx);
+            }
+            
+            if (activeIndices.length > 0) {
+                const activeOverall = activeIndices.map(idx => data.overall[idx]);
+                const activeLabels = activeIndices.map(idx => data.labels[idx]);
+
+                const peakVal = Math.max(...activeOverall);
+                const bestVal = Math.min(...activeOverall);
+                
+                const peakIdxInActive = activeOverall.indexOf(peakVal);
+                const bestIdxInActive = activeOverall.indexOf(bestVal);
+
+                document.getElementById('worstTimeDisplay').innerText = activeLabels[peakIdxInActive];
+                document.getElementById('bestTimeDisplay').innerText = activeLabels[bestIdxInActive];
+                
+                if(currentView === 'today') {
+                    document.getElementById('sessionStatus').innerText = `SESSION ACTIVE: ${activeLabels[0]} - ${activeLabels[activeLabels.length-1]}`;
+                } else {
+                    document.getElementById('sessionStatus').innerText = `HISTORICAL TRENDS VIEW`;
+                }
+            }
+
+            const getAvg = arr => arr.length ? arr.reduce((a,b) => a+b, 0) / arr.length : 0;
+            radarChart.data.datasets[0].data = [
+                getAvg(data.posture),
+                getAvg(data.vocal),
+                getAvg(data.visual),
+                getAvg(data.drowsiness)
+            ];
+            radarChart.update();
+
+            const latestFatigue = data.drowsiness[data.drowsiness.length - 1];
+            const latestStress = data.visual[data.visual.length - 1];
+            const latestVocal = data.vocal[data.vocal.length - 1];
+
+            document.getElementById('fatigueInsight').innerText = latestFatigue > 20 ? "Drowsiness peaking. Break suggested." : "Energy levels appear stable.";
+            document.getElementById('stressInsight').innerText = latestStress > 30 ? "High SVM stress detected recently." : "AI reports calm facial baseline.";
+            document.getElementById('vocalInsight').innerText = latestVocal > 25 ? "Vocal strain detected. Hydrate." : "Speech energy within normal range.";
+        });
+    }
+
+    updateData(); updateTrend();
+    setInterval(updateData, 5000);
+    setInterval(updateTrend, 30000);
+</script>
+</body>
+</html>
