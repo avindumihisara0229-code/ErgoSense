@@ -20,7 +20,7 @@ app = Flask(__name__)
 
 # --- GEMINI AI SETUP ---
 # Securely configure the API key on the backend
-genai.configure(api_key="AIzaSyBSFW4SyigNmGwN0GZGGkU01y1ENcfRrak")
+genai.configure(api_key="")
 # UPDATED to the working model version:
 gemini_model = genai.GenerativeModel('gemini-2.0-flash-001')
 
