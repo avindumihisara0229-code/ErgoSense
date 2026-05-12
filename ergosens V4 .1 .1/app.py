@@ -20,7 +20,7 @@ from tensorflow import keras
 app = Flask(__name__)
 
 # --- GEMINI AI SETUP ---
-genai.configure(api_key="AIzaSyBSFW4SyigNmGwN0GZGGkU01y1ENcfRrak")
+genai.configure(api_key="aiaddapikey")
 gemini_model = genai.GenerativeModel('gemini-2.0-flash-001')
 
 # --- CONFIGURATION ---
