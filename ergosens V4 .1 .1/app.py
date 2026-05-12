@@ -11,6 +11,7 @@ import librosa
 import tempfile
 import json
 import pickle
+import traceback
 import google.generativeai as genai # NEW: Added for Chatbot
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
@@ -19,15 +20,12 @@ from tensorflow import keras
 app = Flask(__name__)
 
 # --- GEMINI AI SETUP ---
-# Securely configure the API key on the backend
-genai.configure(api_key="")
-# UPDATED to the working model version:
+genai.configure(api_key="AIzaSyBSFW4SyigNmGwN0GZGGkU01y1ENcfRrak")
 gemini_model = genai.GenerativeModel('gemini-2.0-flash-001')
 
 # --- CONFIGURATION ---
 MODEL_PATH = 'posture_model.joblib'
 VOCAL_MODEL_PATH = 'vocal_stress.joblib'
-# UPDATED: Paths for your newly trained model and preprocessors
 STRESS_MODEL_PATH = 'stress_detection_model.joblib' 
 SCALER_PATH = 'scaler.pkl'
 ENCODER_PATH = 'label_encoder.pkl'
@@ -36,19 +34,21 @@ YAWN_MODEL_PATH = os.path.join(BASE_DIR, "models", "yawn_model.pkl")
 EYE_MODEL_PATH = os.path.join(BASE_DIR, "models", "eye_cnn_model.keras")
 
 # SENSITIVITY & PERSISTENCE
-# ---> CHANGED: Lowered from 300 to 90 (approx 3 seconds) for much higher sensitivity <---
-STRESS_PERSISTENCE_LIMIT = 90 
+STRESS_PERSISTENCE_LIMIT = 60
 SENSITIVITY_THRESHOLD = 0.3   
 FRONT_SENSITIVITY = 0.15
 LOUDNESS_THRESHOLD = 0.006     
 
-# DROWSINESS CONFIG (Using ML + Timers to prevent flicker)
-EYE_AR_THRESH = 0.21           # Added back EAR threshold for fallback
-MAR_THRESH = 0.8             # Set to 0.60 to prevent talking from triggering yawns
-YAWN_SECONDS_LIMIT = 2.5       # MUST open mouth for 2.5 full seconds to trigger
-SLOW_BLINK_SECONDS = 1.0       # eye closed 1+ second = slow/drowsy blink
-DROWSY_WINDOW = 120            # 2 minutes in seconds
-SLOW_BLINK_THRESHOLD = 3       # 3+ slow blinks in 2 min = drowsy
+# DROWSINESS CONFIG
+EYE_AR_THRESH = 0.21
+MAR_THRESH = 0.75
+YAWN_SECONDS_LIMIT = 2.5
+SLOW_BLINK_SECONDS = 1.0
+DROWSY_WINDOW = 120
+SLOW_BLINK_THRESHOLD = 3
+
+# ABSENCE CONFIG
+ABSENCE_LIMIT_SECONDS = 60    # 1 minute before system turns off and alerts
 
 # --- GLOBAL TRACKERS ---
 stress_tracker = {'streak': 0}
@@ -56,6 +56,11 @@ drowsy_tracker = {
     'yawn_start_time': None,
     'eye_closed_start': None,
     'slow_blinks': [],
+}
+absence_tracker = {
+    'absent_since': None,       # timestamp when face first disappeared
+    'system_paused': False,     # whether system is currently paused
+    'alert_sent': False,        # whether alert has been sent already
 }
 
 # --- SAFE DATABASE CONNECTION ---
@@ -85,26 +90,47 @@ face_mesh = mp_face_mesh.FaceMesh(static_image_mode=False, max_num_faces=1, min_
 
 # --- MODEL LOADING ---
 eye_model = None
+posture_model = None
+v_model = None
+v_scaler = None
+stress_model = None
+stress_scaler = None
+stress_encoder = None
+yawn_model = None
+
+# --- BLOCK 1: Load all non-Keras models ---
 try:
     posture_model = joblib.load(MODEL_PATH)
+    print("✅ Posture Model Loaded!")
+
     v_bundle = joblib.load(VOCAL_MODEL_PATH)
     v_model, v_scaler = v_bundle['model'], v_bundle['scaler']
-    
-    # Load custom stress model, scaler, and encoder
-    stress_model = joblib.load(STRESS_MODEL_PATH) 
+    print("✅ Vocal Model Loaded!")
+
+    stress_model = joblib.load(STRESS_MODEL_PATH)
     stress_scaler = joblib.load(SCALER_PATH)
     stress_encoder = joblib.load(ENCODER_PATH)
-    
-    yawn_model = pickle.load(open(YAWN_MODEL_PATH, "rb")) if os.path.exists(YAWN_MODEL_PATH) else None
-    if os.path.exists(EYE_MODEL_PATH):
-        eye_model = keras.models.load_model(EYE_MODEL_PATH)
-        print("✅ Eye CNN Model Loaded!")
-    print("✅ All AI Models Loaded Successfully!")
-except Exception as e:
-    print(f"❌ Model Loading Error: {e}")
-    posture_model = v_model = stress_model = stress_scaler = stress_encoder = yawn_model = None
+    print(f"✅ Stress Model Loaded! Classes: {stress_encoder.classes_}")
 
-# --- EYE CROPPING (for CNN-based eye detection) ---
+    yawn_model = pickle.load(open(YAWN_MODEL_PATH, "rb")) if os.path.exists(YAWN_MODEL_PATH) else None
+    print("✅ Yawn Model Loaded!" if yawn_model else "⚠️ Yawn model file not found, using MAR fallback.")
+
+except Exception as e:
+    print(f"❌ Non-Keras Model Loading Error: {e}")
+    traceback.print_exc()
+
+# --- BLOCK 2: Load Keras eye model SEPARATELY ---
+try:
+    if os.path.exists(EYE_MODEL_PATH):
+        eye_model = keras.models.load_model(EYE_MODEL_PATH, compile=False)
+        print("✅ Eye CNN Model Loaded!")
+    else:
+        print("⚠️ Eye CNN model file not found, using EAR fallback.")
+except Exception as e:
+    print(f"⚠️ Eye CNN Model failed to load (will use EAR fallback): {e}")
+    eye_model = None
+
+# --- EYE CROPPING ---
 LEFT_EYE = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]
 RIGHT_EYE = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]
 
@@ -114,7 +140,6 @@ MOUTH_LANDMARKS = [
 ]
 
 def crop_single_eye(image_bgr, lms, eye_indices, h, w):
-    """Crop a single eye region from face using landmarks."""
     xs = [int(lms[i].x * w) for i in eye_indices]
     ys = [int(lms[i].y * h) for i in eye_indices]
     eye_w = max(xs) - min(xs)
@@ -131,13 +156,10 @@ def crop_single_eye(image_bgr, lms, eye_indices, h, w):
     return crop
 
 def predict_eye_cnn(image_bgr, lms):
-    """Use CNN to detect if eyes are open or closed."""
     if eye_model is None:
         return "Open", 0.0
-    
     h, w = image_bgr.shape[:2]
     probs = []
-    
     for eye_idx in [LEFT_EYE, RIGHT_EYE]:
         crop = crop_single_eye(image_bgr, lms, eye_idx, h, w)
         if crop is not None:
@@ -146,27 +168,22 @@ def predict_eye_cnn(image_bgr, lms):
             img = np.expand_dims(img, axis=0)
             prob = float(eye_model.predict(img, verbose=0)[0][0])
             probs.append(prob)
-    
     if not probs:
         return "Open", 0.0
-    
     avg_prob = max(probs)
     label = "Closed" if avg_prob > 0.5 else "Open"
     confidence = avg_prob if label == "Closed" else 1 - avg_prob
     return label, round(confidence * 100, 1)
 
 def get_ear(lms, eye_idxs):
-    """Mathematical fallback for eye closure."""
     v1 = np.linalg.norm(np.array([lms[eye_idxs[1]].x, lms[eye_idxs[1]].y]) - np.array([lms[eye_idxs[5]].x, lms[eye_idxs[5]].y]))
     v2 = np.linalg.norm(np.array([lms[eye_idxs[2]].x, lms[eye_idxs[2]].y]) - np.array([lms[eye_idxs[4]].x, lms[eye_idxs[4]].y]))
     h = np.linalg.norm(np.array([lms[eye_idxs[0]].x, lms[eye_idxs[0]].y]) - np.array([lms[eye_idxs[3]].x, lms[eye_idxs[3]].y]))
     return (v1 + v2) / (2.0 * h) if h != 0 else 0
 
 def calculate_mar_dt(lms):
-    """Calculate MAR using the 20-point mouth landmarks."""
     def _dist(p1, p2):
         return np.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
-    
     pts = [(lms[i].x, lms[i].y) for i in MOUTH_LANDMARKS]
     v1 = _dist(pts[2], pts[10])
     v2 = _dist(pts[4], pts[8])
@@ -177,18 +194,14 @@ def calculate_mar_dt(lms):
     return (v1 + v2 + v3) / (3.0 * h)
 
 def predict_yawn_dt(lms):
-    """Use Decision Tree to detect yawn."""
     mar = calculate_mar_dt(lms)
-    
     if mar < MAR_THRESH:
         return "No-Yawn", round(mar, 4)
-    
     if yawn_model is not None:
         pred = yawn_model.predict([[mar]])[0]
         label = "Yawn" if pred == 1 else "No-Yawn"
     else:
         label = "Yawn" if mar >= MAR_THRESH else "No-Yawn"
-    
     return label, round(mar, 4)
 
 def extract_facial_landmarks(image):
@@ -210,7 +223,7 @@ user_baseline = {
     'side_neck_angle': None, 
     'side_back_angle': None,
     'is_calibrated': False, 
-    'vocal_threshold': 0.005
+    'vocal_threshold': 0.04
 }
 if os.path.exists(BASELINE_FILE):
     try:
@@ -222,54 +235,126 @@ def save_baseline_to_disk():
 
 # --- CORE ANALYSIS ENGINE ---
 def analyze_multimodal(image):
-    global stress_tracker, drowsy_tracker
+    global stress_tracker, drowsy_tracker, absence_tracker
     lms = extract_facial_landmarks(image)
-    
+    now = datetime.now().timestamp()
+
     visual_status = "Optimal"
     drowsy_status = "Alert"
     mar_val = 0.0
-    
+
+    # --- ABSENCE DETECTION LOGIC ---
+    if not lms:
+        # Face not detected — start or continue absence timer
+        if absence_tracker['absent_since'] is None:
+            absence_tracker['absent_since'] = now
+            absence_tracker['alert_sent'] = False
+            print("[DEBUG] Face lost — absence timer started")
+
+        absence_duration = now - absence_tracker['absent_since']
+
+        # Drain stress streak quickly while absent
+        stress_tracker['streak'] = max(0, stress_tracker['streak'] - 5)
+        drowsy_tracker['yawn_start_time'] = None
+        drowsy_tracker['eye_closed_start'] = None
+
+        # If absent for more than 1 minute, pause system
+        if absence_duration >= ABSENCE_LIMIT_SECONDS:
+            absence_tracker['system_paused'] = True
+            alert_needed = not absence_tracker['alert_sent']
+            if alert_needed:
+                absence_tracker['alert_sent'] = True
+                print("[ALERT] Person absent for 1 minute — system paused!")
+
+            absent_minutes = int(absence_duration // 60)
+            absent_seconds = int(absence_duration % 60)
+
+            return {
+                'status': 'success',
+                'result': 'System Paused',
+                'is_bad': False,
+                'visual': 'Optimal',
+                'stress_streak': 0,
+                'drowsy': 'Alert',
+                'drowsy_streak': 0,
+                'debug_mar': 0,
+                'system_paused': True,
+                'alert': alert_needed,
+                'absent_duration': f"{absent_minutes}m {absent_seconds}s",
+            }
+
+        # Not yet at 1 minute — return normal but with countdown
+        seconds_until_pause = int(ABSENCE_LIMIT_SECONDS - absence_duration)
+        return {
+            'status': 'success',
+            'result': 'No Face Detected',
+            'is_bad': False,
+            'visual': 'Optimal',
+            'stress_streak': 0,
+            'drowsy': 'Alert',
+            'drowsy_streak': 0,
+            'debug_mar': 0,
+            'system_paused': False,
+            'alert': False,
+            'seconds_until_pause': seconds_until_pause,
+        }
+
+    else:
+        # Face detected — reset absence tracker and unpause system
+        if absence_tracker['absent_since'] is not None:
+            print("[DEBUG] Face returned — system resuming")
+        absence_tracker['absent_since'] = None
+        absence_tracker['system_paused'] = False
+        absence_tracker['alert_sent'] = False
+
     if lms:
         # 1. Custom Stress Model Integration
         feats = []
         for l in lms:
             feats.extend([l.x, l.y])
+
+        print(f"[DEBUG] Feature count: {len(feats)}")
             
         if stress_model and stress_scaler and stress_encoder:
             try:
                 scaled_feats = stress_scaler.transform([feats])
                 
-                # ---> CHANGED: Try to use predict_proba for finer control if available <---
                 if hasattr(stress_model, "predict_proba"):
                     probs = stress_model.predict_proba(scaled_feats)[0]
-                    # Assuming 'stress' is one of the classes, find its index
-                    stress_idx = list(stress_encoder.classes_).index('stress')
-                    # If probability of stress is > 40% (instead of strict 50%), flag it
-                    is_stressed = probs[stress_idx] > 0.40
+                    classes = list(stress_encoder.classes_)
+                    print(f"[DEBUG] Stress classes: {classes} | Probs: {probs}")
+
+                    stress_label = next((c for c in classes if c.lower() == 'stress'), None)
+                    if stress_label is None:
+                        print(f"[DEBUG] WARNING: No 'stress' class found in {classes}")
+                        is_stressed = False
+                    else:
+                        stress_idx = classes.index(stress_label)
+                        is_stressed = probs[stress_idx] > 0.70
+                        print(f"[DEBUG] Stress prob: {probs[stress_idx]:.3f} | Streak: {stress_tracker['streak']} | Is stressed: {is_stressed}")
                 else:
-                    # Fallback to strict prediction if probability isn't supported
                     pred_encoded = stress_model.predict(scaled_feats)
                     pred_label = stress_encoder.inverse_transform(pred_encoded)[0]
-                    is_stressed = (pred_label == "stress")
+                    print(f"[DEBUG] Stress prediction (no proba): {pred_label} | Streak: {stress_tracker['streak']}")
+                    is_stressed = (pred_label.lower() == "stress")
 
                 if is_stressed:
                     stress_tracker['streak'] += 1
                     if stress_tracker['streak'] >= STRESS_PERSISTENCE_LIMIT: 
                         visual_status = "Stressed"
                 else: 
-                    # ---> CHANGED: Don't instantly reset to 0. Subtract 2 so it 'cools down'. <---
-                    # This prevents one single non-stressed frame from ruining a 89-frame streak
-                    stress_tracker['streak'] = max(0, stress_tracker['streak'] - 2)
+                    stress_tracker['streak'] = max(0, stress_tracker['streak'] - 3)
             except Exception as e:
-                print(f"Stress Prediction Error: {e}")
+                print(f"[DEBUG] Stress Prediction Error: {e}")
+                traceback.print_exc()
+        else:
+            print(f"[DEBUG] Stress model not loaded — stress_model:{stress_model is not None} scaler:{stress_scaler is not None} encoder:{stress_encoder is not None}")
 
-        # 2. Drowsiness & Yawn Logic (ML Driven + Math Fallback)
+        # 2. Drowsiness & Yawn Logic
         eye_state, _ = predict_eye_cnn(image, lms)
         ear_val = (get_ear(lms, [33, 160, 158, 133, 153, 144]) + get_ear(lms, [362, 385, 387, 263, 373, 380])) / 2.0
         yawn_state, mar_val = predict_yawn_dt(lms)
-        now = datetime.now().timestamp()
 
-        # ML-Based Slow Blink Tracking (CNN OR EAR Fallback)
         is_closed = (eye_state == "Closed")
         
         if is_closed:
@@ -282,20 +367,17 @@ def analyze_multimodal(image):
                     drowsy_tracker['slow_blinks'].append(now)
                 drowsy_tracker['eye_closed_start'] = None
                 
-        # ML-Based Yawn Temporal Logic
         is_yawning = (yawn_state == "Yawn") and (mar_val >= MAR_THRESH)
         
         if is_yawning:
             if drowsy_tracker['yawn_start_time'] is None:
                 drowsy_tracker['yawn_start_time'] = now
-            
             yawn_duration = now - drowsy_tracker['yawn_start_time']
             if yawn_duration >= YAWN_SECONDS_LIMIT:
                 drowsy_status = "Yawn Detected"
         else:
             drowsy_tracker['yawn_start_time'] = None
 
-        # Check slow blinks history
         drowsy_tracker['slow_blinks'] = [t for t in drowsy_tracker['slow_blinks'] if now - t < DROWSY_WINDOW]
         if len(drowsy_tracker['slow_blinks']) >= SLOW_BLINK_THRESHOLD:
             drowsy_status = "Drowsy"
@@ -307,7 +389,6 @@ def analyze_multimodal(image):
     
     if results.pose_landmarks:
         l = results.pose_landmarks.landmark
-        
         is_front = abs(l[11].x - l[12].x) > 0.22
         p_mode = "Front" if is_front else "Side"
         
@@ -315,14 +396,12 @@ def analyze_multimodal(image):
             dist = ((l[11].y + l[12].y) / 2) - l[0].y
             limit = user_baseline['front_neck_dist'] * 0.72 if user_baseline['is_calibrated'] else FRONT_SENSITIVITY
             shoulder_tilt = abs(l[11].y - l[12].y)
-            
             if dist < limit: p_status = "Incorrect (Slumping)"
             elif shoulder_tilt > 0.08: p_status = "Incorrect (Side Lean)"
         else:
             le, ls, lh, lk = [l[7].x, l[7].y], [l[11].x, l[11].y], [l[23].x, l[23].y], [l[25].x, l[25].y]
             n_ang = calculate_angle(le, ls, lh)
             b_ang = calculate_angle(ls, lh, lk)
-            
             if user_baseline['is_calibrated']:
                 if abs(n_ang - user_baseline['side_neck_angle']) > 18 or abs(b_ang - user_baseline['side_back_angle']) > 18:
                     p_status = "Incorrect (Side Angle)"
@@ -340,7 +419,9 @@ def analyze_multimodal(image):
         'status': 'success', 'result': f"{p_status} ({p_mode})", 'is_bad': "Incorrect" in p_status,
         'visual': visual_status, 'stress_streak': stress_tracker['streak'],
         'drowsy': drowsy_status, 'drowsy_streak': len(drowsy_tracker['slow_blinks']) if lms else 0,
-        'debug_mar': round(mar_val, 3) if lms else 0
+        'debug_mar': round(mar_val, 3) if lms else 0,
+        'system_paused': False,
+        'alert': False,
     }
 
 # --- REST OF THE ROUTES ---
@@ -350,15 +431,32 @@ def index(): return render_template('index.html')
 @app.route('/analytics')
 def analytics_page(): return render_template('analytics.html')
 
+# --- NEW: Absence status route for frontend polling ---
+@app.route('/absence_status')
+def absence_status():
+    now = datetime.now().timestamp()
+    if absence_tracker['absent_since'] is not None:
+        duration = now - absence_tracker['absent_since']
+        return jsonify({
+            'is_absent': True,
+            'system_paused': absence_tracker['system_paused'],
+            'absent_seconds': int(duration),
+            'seconds_until_pause': max(0, int(ABSENCE_LIMIT_SECONDS - duration)),
+        })
+    return jsonify({
+        'is_absent': False,
+        'system_paused': False,
+        'absent_seconds': 0,
+        'seconds_until_pause': ABSENCE_LIMIT_SECONDS,
+    })
+
 # --- CHATBOT BACKEND ROUTE ---
 @app.route('/chatbot', methods=['POST'])
 def chatbot_response():
     data = request.json
     user_msg = data.get('message', '')
     context = data.get('context', '')
-    
     prompt = f"{context} User asked: '{user_msg}'. Provide a very concise, empathetic wellness recommendation. Keep it short."
-    
     try:
         response = gemini_model.generate_content(prompt)
         return jsonify({'reply': response.text})
@@ -442,9 +540,7 @@ def calibrate():
         results = pose_estimator.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
         if results.pose_landmarks:
             l = results.pose_landmarks.landmark
-            
             is_front = abs(l[11].x - l[12].x) > 0.22
-            
             if is_front:
                 user_baseline['front_neck_dist'] = ((l[11].y + l[12].y) / 2) - l[0].y
             else:
