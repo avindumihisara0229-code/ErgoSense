@@ -16,12 +16,28 @@ import google.generativeai as genai # NEW: Added for Chatbot
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
 from tensorflow import keras
+from dotenv import load_dotenv
 
 app = Flask(__name__)
 
+# --- LOAD ENVIRONMENT VARIABLES ---
+load_dotenv() # NEW: Load variables from the .env file
+
 # --- GEMINI AI SETUP ---
-genai.configure(api_key="aiaddapikey")
-gemini_model = genai.GenerativeModel('gemini-2.0-flash-001')
+# NEW: Fetch the API key securely from the environment
+api_key = os.getenv("GEMINI_API_KEY") 
+
+# Comment these two lines out so the app doesn't crash:
+# if not api_key:
+#     raise ValueError("No GEMINI_API_KEY found. Please check your .env file.")
+
+# We also need to conditionally configure the AI so it doesn't crash here:
+if api_key:
+    genai.configure(api_key=api_key)
+    gemini_model = genai.GenerativeModel('gemini-2.0-flash-001')
+else:
+    gemini_model = None
+    print("⚠️ Running WITHOUT Gemini API Key. Chatbot disabled.")
 
 # --- CONFIGURATION ---
 MODEL_PATH = 'posture_model.joblib'
